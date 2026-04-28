@@ -661,6 +661,9 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
         logoUrl: brand.logoUrl || undefined,
         cta: brand.defaultCta || undefined,
         autoBackground: false,
+        companyName: brand.companyName || undefined,
+        companyWebsite: brand.websiteUrl || undefined,
+        companyDescription: brand.description || undefined,
       };
     }
 
@@ -685,6 +688,9 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       logoUrl: customLogoUrl || undefined,
       cta: customCta || undefined,
       autoBackground,
+      companyName: brand.companyName || undefined,
+      companyWebsite: brand.websiteUrl || undefined,
+      companyDescription: brand.description || undefined,
     };
   }
 

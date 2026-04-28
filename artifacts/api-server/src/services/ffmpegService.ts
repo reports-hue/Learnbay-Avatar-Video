@@ -269,6 +269,7 @@ export interface PostProcessOptions {
   primaryColor?: string;
   backgroundColor?: string;
   gradientColor2?: string;
+  backgroundStyle?: "cinematic_dark" | "tech_gradient" | "warm_studio" | "creative_pop" | "corporate_sleek";
   cta?: string;
   musicPath?: string;
   wordTimings?: WordTiming[];
@@ -304,6 +305,7 @@ export async function postProcessAvatarVideo(
   const accentHex = toFFmpegHex(options.primaryColor ?? "#4A9FFF");
   const accentColor = options.primaryColor ?? "#4A9FFF";
   const useGradient = bg2Hex !== null;
+  const backgroundStyle = options.backgroundStyle ?? "cinematic_dark";
 
   // ── Resolve logo ──
   let logoPath: string | null = null;
@@ -373,22 +375,46 @@ export async function postProcessAvatarVideo(
 
     const fp: string[] = [];
 
-    // ── 1. Background source (always explicit — needed for green screen AND Ken Burns) ──
+    // ── 1. Background source — rich cinematic gradient ──
+    // Always use a gradient for visual depth; fallback to solid if no bg2
     if (useGradient) {
       if (isVertical) {
-        fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=${outW103/2}:y0=0:x1=${outW103/2}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=30[bg_raw]`);
+        // Portrait: diagonal gradient (top-left to bottom-right) for dynamic feel
+        fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=30[bg_raw]`);
       } else {
         fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=30[bg_raw]`);
       }
     } else {
+      // Solid with a subtle tonal shift for depth
       fp.push(`color=c=${bgHex}:s=${outW103}x${outH103}:r=30:d=${bgDur}[bg_raw]`);
     }
 
-    // ── 2. Ken Burns effect on background (subtle 3% zoom + slow pan) ──
+    // ── 2. Cinematic radial glow overlay — accent-colored "key light" behind avatar ──
+    // Uses FFmpeg's native radial gradients source (efficient, no per-pixel math).
+    // Centered at 50% width / 30% height (behind avatar's head area).
+    const glowW = outW103;
+    const glowH = outH103;
+    const gcx = Math.round(glowW * 0.5);   // horizontal center
+    const gcy = Math.round(glowH * 0.30);   // upper-third (head area)
+    const gradRadius = Math.round(glowW * 0.75); // glow radius — wide, soft bloom
+    // Glow blend intensity varies by mood
+    const glowIntensity = backgroundStyle === "tech_gradient" ? 0.24
+      : backgroundStyle === "creative_pop" ? 0.32
+      : backgroundStyle === "warm_studio" ? 0.20
+      : backgroundStyle === "corporate_sleek" ? 0.13
+      : 0.18; // cinematic_dark
+    fp.push(
+      // Radial gradient: accent color at center fading to black at gradRadius
+      `gradients=s=${glowW}x${glowH}:type=radial:x0=${gcx}:y0=${gcy}:x1=${gcx + gradRadius}:y1=${gcy}:c0=${accentHex}:c1=0x000000:duration=${bgDur}:rate=1[glow_src]`,
+      // Screen-blend glow on top of background — adds light without clipping
+      `[bg_raw][glow_src]blend=all_mode=screen:all_opacity=${glowIntensity}[bg_lit]`
+    );
+
+    // ── 3. Ken Burns effect on background (subtle 3% zoom + slow pan) ──
     if (realism) {
-      fp.push(`[bg_raw]crop=${outW}:${outH}:x='min(iw-ow\\,(iw-ow)*t/${duration})':y='(ih-oh)/2'[bg]`);
+      fp.push(`[bg_lit]crop=${outW}:${outH}:x='min(iw-ow\\,(iw-ow)*t/${duration})':y='(ih-oh)/2'[bg]`);
     } else {
-      fp.push(`[bg_raw]crop=${outW}:${outH}:x='(iw-ow)/2':y='(ih-oh)/2'[bg]`);
+      fp.push(`[bg_lit]crop=${outW}:${outH}:x='(iw-ow)/2':y='(ih-oh)/2'[bg]`);
     }
 
     // ── 3. Avatar compositing ──
@@ -447,12 +473,16 @@ export async function postProcessAvatarVideo(
     fp.push(`[${lastV}]drawbox=x=0:y=ih-${lt + barH}:w=iw:h=${barH}:c=${accentHex}:t=fill[with_bar]`);
     lastV = "with_bar";
 
-    // ── 7. Logo — top-right ──
+    // ── 7. Logo — top-right with dark glass pill background ──
     if (logoIdx >= 0) {
-      const logoW = isVertical ? Math.round(outW * 0.18) : Math.round(outW * 0.10);
-      const pad = isVertical ? 22 : 16;
-      fp.push(`[${logoIdx}:v]scale=${logoW}:-1[logo_s]`);
-      fp.push(`[${lastV}][logo_s]overlay=W-w-${pad}:${pad}[with_logo]`);
+      const logoW = isVertical ? Math.round(outW * 0.15) : Math.round(outW * 0.09);
+      const margin = isVertical ? 24 : 18;
+      const hPad = 18; // horizontal padding inside pill
+      const vPad = 12; // vertical padding inside pill
+      // Scale logo, preserve alpha, add semi-transparent dark padding (pill background)
+      fp.push(`[${logoIdx}:v]scale=${logoW}:-1,format=rgba[logo_raw]`);
+      fp.push(`[logo_raw]pad=iw+${hPad * 2}:ih+${vPad * 2}:${hPad}:${vPad}:color=0x000000B0[logo_pill]`);
+      fp.push(`[${lastV}][logo_pill]overlay=W-w-${margin}:${margin}:format=auto[with_logo]`);
       lastV = "with_logo";
     }
 

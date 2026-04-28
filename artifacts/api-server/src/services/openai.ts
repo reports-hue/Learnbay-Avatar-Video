@@ -23,7 +23,6 @@ const DURATIONS: Record<string, string> = {
   "Landscape Video": "40-60 seconds when spoken at a natural pace",
 };
 
-// Natural human speech rules applied to all styles
 const HUMAN_SPEECH_RULES = `
 MANDATORY HUMAN SPEECH RULES (apply to every script):
 - Write EXACTLY how a real person talks out loud — NOT how someone writes
@@ -78,37 +77,50 @@ export interface BrandTheme {
   bgColor1: string;
   bgColor2: string;
   accentColor: string;
+  backgroundStyle: "cinematic_dark" | "tech_gradient" | "warm_studio" | "creative_pop" | "corporate_sleek";
 }
 
 export async function generateBrandTheme(topic: string, platform: string): Promise<BrandTheme> {
-  const prompt = `You are a professional motion graphics designer. Choose a sophisticated broadcast-quality color scheme for a ${platform} video about: "${topic}".
+  const prompt = `You are a senior cinematographer and motion graphics director. Design a broadcast-quality visual theme for a ${platform} video about: "${topic}".
 
-- bgColor1: dark primary background (hex #RRGGBB, must be dark/deep)
-- bgColor2: lighter variant of same hue (for gradient — should be distinctly lighter, 20-40% lighter)
-- accentColor: vibrant contrast accent matching the topic mood (not neon, premium brand palette)
+Choose colors like a BILLION-DOLLAR BRAND would — inspired by campaigns from Apple, Nike, Google, Stripe.
 
-Return ONLY valid JSON: {"bgColor1":"#0D1B2A","bgColor2":"#1A3A5C","accentColor":"#4A9FFF"}`;
+Rules:
+- bgColor1: Rich, atmospheric deep tone (NOT pure black #000000 — use deep navy, forest, burgundy, charcoal-blue, midnight teal, etc.)
+- bgColor2: Clearly different and lighter/warmer variant of bgColor1 (creates dramatic gradient — should contrast noticeably)
+- accentColor: Vivid, eye-catching brand color that pops against the dark background (electric blue, hot coral, golden yellow, neon mint, etc.)
+- backgroundStyle: Choose the mood:
+  • "cinematic_dark" — dark moody cinematic (tech, finance, serious topics)
+  • "tech_gradient" — cool blue/purple tech feel (software, AI, innovation topics)
+  • "warm_studio" — warm amber/orange tones (lifestyle, wellness, education topics)
+  • "creative_pop" — vibrant energetic colors (creative, youth, entertainment topics)
+  • "corporate_sleek" — clean dark navy/charcoal (business, corporate, professional topics)
+
+Return ONLY valid JSON:
+{"bgColor1":"#0A1628","bgColor2":"#1A2F5A","accentColor":"#00D4FF","backgroundStyle":"tech_gradient"}`;
 
   const response = await client.chat.completions.create({
     model: deploymentName,
     messages: [{ role: "user", content: prompt }],
-    max_tokens: 80,
-    temperature: 0.7,
+    max_tokens: 120,
+    temperature: 0.8,
   });
 
   const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
   try {
     const parsed = JSON.parse(raw) as Partial<BrandTheme>;
+    const validStyles = ["cinematic_dark", "tech_gradient", "warm_studio", "creative_pop", "corporate_sleek"];
     const theme: BrandTheme = {
-      bgColor1: /^#[0-9a-fA-F]{6}$/.test(parsed.bgColor1 ?? "") ? parsed.bgColor1! : "#0D1B2A",
+      bgColor1: /^#[0-9a-fA-F]{6}$/.test(parsed.bgColor1 ?? "") ? parsed.bgColor1! : "#0A1628",
       bgColor2: /^#[0-9a-fA-F]{6}$/.test(parsed.bgColor2 ?? "") ? parsed.bgColor2! : "#1A3A5C",
-      accentColor: /^#[0-9a-fA-F]{6}$/.test(parsed.accentColor ?? "") ? parsed.accentColor! : "#4A9FFF",
+      accentColor: /^#[0-9a-fA-F]{6}$/.test(parsed.accentColor ?? "") ? parsed.accentColor! : "#00D4FF",
+      backgroundStyle: validStyles.includes(parsed.backgroundStyle ?? "") ? parsed.backgroundStyle as BrandTheme["backgroundStyle"] : "cinematic_dark",
     };
     logger.info({ theme }, "Brand theme generated");
     return theme;
   } catch {
     logger.warn({ raw }, "Failed to parse brand theme, using defaults");
-    return { bgColor1: "#0D1B2A", bgColor2: "#1A3A5C", accentColor: "#4A9FFF" };
+    return { bgColor1: "#0A1628", bgColor2: "#1A3A5C", accentColor: "#00D4FF", backgroundStyle: "tech_gradient" };
   }
 }
 
@@ -189,16 +201,61 @@ Return ONLY valid JSON (no code blocks) with these exact keys:
   }
 }
 
+/**
+ * Research a company's key features, products, and differentiators
+ * so the script can reference specific, accurate details.
+ */
+export async function researchCompanyForScript(
+  companyName: string,
+  companyWebsite: string,
+  companyDescription: string,
+  topic: string
+): Promise<string> {
+  const prompt = `You are a professional content researcher. Research the company "${companyName}" and produce a tight fact-sheet for a video script writer.
+
+Known info:
+- Website: ${companyWebsite || "unknown"}
+- Description: ${companyDescription || "not provided"}
+- Video topic: ${topic}
+
+Using your knowledge about this company (or similar companies if this is a lesser-known startup), generate a research brief with:
+1. What the product/service ACTUALLY does (2-3 sentences, specific and concrete)
+2. Key features relevant to the video topic (3-5 bullet points with specifics)
+3. The primary user pain point it solves
+4. One compelling statistic or differentiator (can be estimated if unknown)
+5. The target audience (be specific: e.g., "high school students studying for exams" not just "students")
+
+Be specific and concrete. If you don't know exact facts, extrapolate intelligently from the company name, website, and description. Make it useful for writing a compelling, accurate video script. Keep total response under 200 words.`;
+
+  logger.info({ companyName, topic }, "Researching company for script context");
+
+  const response = await client.chat.completions.create({
+    model: deploymentName,
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 280,
+    temperature: 0.5,
+  });
+
+  const research = response.choices[0]?.message?.content?.trim() ?? "";
+  logger.info({ researchLength: research.length, companyName }, "Company research complete");
+  return research;
+}
+
 export async function generateScript(
   topic: string,
   platform: string,
-  style: ScriptStyle = "viral"
+  style: ScriptStyle = "viral",
+  companyContext?: string
 ): Promise<string> {
   const duration = DURATIONS[platform] ?? "25-35 seconds when spoken at a natural pace";
   const styleGuide = STYLE_PROMPTS[style];
 
-  const prompt = `Write a ${platform} video script about this topic: ${topic}
+  const contextSection = companyContext
+    ? `\nCOMPANY RESEARCH (use these specific facts in the script — don't make things up):\n${companyContext}\n`
+    : "";
 
+  const prompt = `Write a ${platform} video script about this topic: ${topic}
+${contextSection}
 ${styleGuide}
 
 ${HUMAN_SPEECH_RULES}
@@ -206,9 +263,12 @@ ${HUMAN_SPEECH_RULES}
 Additional requirements:
 - Target spoken duration: ${duration}
 - Strong hook in the FIRST 2 seconds that would stop someone scrolling
+- If company research is provided above, mention SPECIFIC features by name — don't be generic
+- The script should feel like it was written by someone who deeply knows this product, not a generic AI
+- Quality level: This script will be used for a video from a billion-dollar company. Make it that good.
 - Return ONLY the clean spoken script text — no notes, no formatting, no headers`;
 
-  logger.info({ topic, platform, style }, "Generating natural-speech script");
+  logger.info({ topic, platform, style, hasContext: !!companyContext }, "Generating natural-speech script");
 
   const response = await client.chat.completions.create({
     model: deploymentName,

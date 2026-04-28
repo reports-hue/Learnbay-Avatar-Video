@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { existsSync } from "fs";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
-import { generateScript, generateBrandTheme, type ScriptStyle } from "../services/openai.js";
+import { generateScript, generateBrandTheme, researchCompanyForScript, type ScriptStyle } from "../services/openai.js";
 import { generateAvatarVideo, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
 import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle } from "../services/ffmpegService.js";
 import { getWordTimings } from "../services/speech.js";
@@ -76,6 +76,9 @@ export interface GenerateRequest {
   pacing?: PacingRate;
   customPhotoUrl?: string;
   elevenLabsKey?: string;
+  companyName?: string;
+  companyWebsite?: string;
+  companyDescription?: string;
 }
 
 // ─── Async generation job ─────────────────────────────────────────
@@ -99,6 +102,9 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     realism = true,
     pacing = "natural",
     elevenLabsKey,
+    companyName = "",
+    companyWebsite = "",
+    companyDescription = "",
   } = body;
 
   // Whitelist of Azure Avatar characters confirmed to work with this API version
@@ -115,14 +121,22 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
   const videoId = uuidv4().replace(/-/g, "").slice(0, 12);
 
   try {
-    updateJob(jobId, { status: "running", step: "script", percent: 5, message: "Crafting your AI script…" });
+    updateJob(jobId, { status: "running", step: "script", percent: 5, message: "Researching your topic & crafting AI script…" });
 
-    const [script, brandThemeResult] = await Promise.all([
-      generateScript(topic, platform, scriptStyle as ScriptStyle),
-      (autoBackground || !backgroundColor)
+    // Run company research (if brand profile present) and theme generation in parallel
+    const needsResearch = companyName.trim().length > 0;
+    const needsTheme = autoBackground || !backgroundColor;
+
+    const [companyContext, brandThemeResult] = await Promise.all([
+      needsResearch
+        ? researchCompanyForScript(companyName, companyWebsite, companyDescription, topic)
+        : Promise.resolve(""),
+      needsTheme
         ? generateBrandTheme(topic, platform)
         : Promise.resolve(null),
     ]);
+
+    const script = await generateScript(topic, platform, scriptStyle as ScriptStyle, companyContext || undefined);
 
     let resolvedBgColor1 = (backgroundColor ?? "#000000FF").slice(0, 7);
     let resolvedBgColor2: string | undefined = requestGradientColor2;
@@ -191,6 +205,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       primaryColor: resolvedAccent,
       backgroundColor: azureBgColor,
       gradientColor2: resolvedBgColor2,
+      backgroundStyle: brandThemeResult?.backgroundStyle,
       cta: cta || undefined,
       wordTimings: wordTimings.length > 0 ? wordTimings : undefined,
       captionStyle,
