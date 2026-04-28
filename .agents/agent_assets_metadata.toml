@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "74UoWIPismv6FU9MCbsoU"
+uri = "file://DEPLOYMENT.md"
+type = "text"
+title = "Deployment Guide — Local + AWS PM2 + AWS Docker"
+
+[[outputs]]
+id = "1UFm-Hb-7yyX2iGiVa5GY"
+uri = "file://deployment-docs.zip"
+type = "unspecified"
+title = "All deployment files (Dockerfile, docker-compose.yml, PM2 config, .env.example)"

@@ -35,15 +35,25 @@ app.use("/api/assets", (_req, res) => {
 });
 app.use("/api", router);
 
-const viteFrontendPort = process.env.VITE_FRONTEND_PORT ?? "24396";
-app.use(
-  "/",
-  createProxyMiddleware({
-    target: `http://localhost:${viteFrontendPort}`,
-    changeOrigin: true,
-    ws: true,
-    logger: console,
-  }),
-);
+if (process.env.NODE_ENV === "production") {
+  // Serve the pre-built React frontend from the video-generator dist folder
+  const frontendDist = path.resolve(__dirname, "../../video-generator/dist/public");
+  app.use("/", express.static(frontendDist));
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(frontendDist, "index.html"));
+  });
+} else {
+  // Dev: proxy live Vite dev server
+  const viteFrontendPort = process.env.VITE_FRONTEND_PORT ?? "24396";
+  app.use(
+    "/",
+    createProxyMiddleware({
+      target: `http://localhost:${viteFrontendPort}`,
+      changeOrigin: true,
+      ws: true,
+      logger: console,
+    }),
+  );
+}
 
 export default app;
