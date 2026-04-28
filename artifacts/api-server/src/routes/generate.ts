@@ -101,6 +101,13 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     elevenLabsKey,
   } = body;
 
+  // Whitelist of Azure Avatar characters confirmed to work with this API version
+  const VALID_AVATAR_CHARACTERS = ["lisa", "harry", "jeff"];
+  const resolvedAvatar = VALID_AVATAR_CHARACTERS.includes(avatar) ? avatar : "lisa";
+  if (avatar !== resolvedAvatar) {
+    logger.warn({ avatar }, "Unknown avatar character, falling back to lisa");
+  }
+
   const isElevenLabs = typeof voice === "string" && voice.startsWith("el:");
   const elVoiceId = isElevenLabs ? voice.slice(3) : null;
   const elApiKey = elevenLabsKey || process.env.ELEVENLABS_API_KEY || "";
@@ -162,7 +169,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
 
     const avatarConfig: AvatarJobConfig = {
       script,
-      character: avatar,
+      character: resolvedAvatar,
       style: avatarStyle,
       voice: isElevenLabs ? "en-US-AvaMultilingualNeural" : voice,
       voiceStyle: voiceStyle || undefined,

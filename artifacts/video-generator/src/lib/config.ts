@@ -48,22 +48,6 @@ export const AVATARS: Record<string, AvatarCharacter> = {
     textColor: "#fff",
     styles: ["business"],
   },
-  lori: {
-    label: "Lori",
-    gender: "F",
-    desc: "Corporate professional",
-    gradient: ["#831843", "#BE185D"],
-    textColor: "#fff",
-    styles: [""],
-  },
-  max: {
-    label: "Max",
-    gender: "M",
-    desc: "Tech expert",
-    gradient: ["#1C1917", "#292524"],
-    textColor: "#fff",
-    styles: [""],
-  },
 };
 
 // Quick-select popular voices (shown before user browses all)

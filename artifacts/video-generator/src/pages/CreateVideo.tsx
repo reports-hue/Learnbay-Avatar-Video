@@ -375,12 +375,15 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   const [bgImageUrl, setBgImageUrl] = useState("");
 
   // Step 3 — avatar & voice
-  const [avatar, setAvatar] = useState(brand.defaultAvatar || "lisa");
+  const [avatar, setAvatar] = useState(() => {
+    const saved = brand.defaultAvatar || "lisa";
+    return AVATARS[saved] ? saved : "lisa";
+  });
   const [avatarStyle, setAvatarStyle] = useState(() => {
-    const initialAvatar = brand.defaultAvatar || "lisa";
+    const saved = brand.defaultAvatar || "lisa";
+    const initialAvatar = AVATARS[saved] ? saved : "lisa";
     const charStyles = AVATARS[initialAvatar]?.styles ?? [""];
     const brandStyle = brand.defaultAvatarStyle || "";
-    // Only use the brand style if it's actually valid for this avatar
     return (brandStyle && charStyles.includes(brandStyle)) ? brandStyle : (charStyles[0] ?? "");
   });
   const [voice, setVoice] = useState(brand.defaultVoice || "en-US-AvaMultilingualNeural");
