@@ -37,7 +37,7 @@ export default function App() {
         <SidebarHeader className="gap-0 pb-2">
           <div className="flex items-center gap-3 px-3 py-4 group-data-[collapsible=icon]:justify-center">
             <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-              <Clapperboard className="w-4 h-4 text-primary-foreground" />
+              <Clapperboard className="w-4 h-4 text-white" />
             </div>
             <div className="group-data-[collapsible=icon]:hidden leading-tight">
               <p className="text-sm font-bold text-foreground">Libraryminds</p>
@@ -51,7 +51,7 @@ export default function App() {
               onClick={() => setPage("create")}
               className={cn(
                 "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold",
-                "bg-primary text-primary-foreground transition-all hover:bg-primary/85",
+                "bg-primary text-white transition-all hover:bg-primary/90",
                 "group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:h-8 group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:justify-center"
               )}
             >
@@ -87,7 +87,7 @@ export default function App() {
                   <Icon className="flex-shrink-0" />
                   <span>{label}</span>
                   {!hasBrand && (
-                    <span className="ml-auto flex-shrink-0 w-2 h-2 rounded-full bg-amber-400 group-data-[collapsible=icon]:hidden" />
+                    <span className="ml-auto flex-shrink-0 w-2 h-2 rounded-full bg-amber-500 group-data-[collapsible=icon]:hidden" />
                   )}
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -100,7 +100,7 @@ export default function App() {
               {brand.logoUrl ? (
                 <img src={brand.logoUrl} alt="" className="w-6 h-6 rounded object-contain" onError={(e) => (e.currentTarget.style.display = "none")} />
               ) : (
-                <div className="w-6 h-6 rounded bg-primary/20 flex items-center justify-center flex-shrink-0">
+                <div className="w-6 h-6 rounded bg-primary/10 flex items-center justify-center flex-shrink-0">
                   <Building2 className="w-3 h-3 text-primary" />
                 </div>
               )}
@@ -113,7 +113,7 @@ export default function App() {
                 </p>
               </div>
               {!hasBrand && (
-                <button onClick={() => setPage("settings")} className="flex-shrink-0 text-amber-400 hover:text-amber-300 transition-colors">
+                <button onClick={() => setPage("settings")} className="flex-shrink-0 text-amber-500 hover:text-amber-600 transition-colors">
                   <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               )}
@@ -125,7 +125,7 @@ export default function App() {
       {/* ── Main content ── */}
       <SidebarInset className="overflow-auto bg-background">
         {/* Top bar */}
-        <header className="sticky top-0 z-10 flex items-center gap-3 px-6 py-3 border-b border-border bg-background/80 backdrop-blur-sm">
+        <header className="sticky top-0 z-10 flex items-center gap-3 px-6 py-3 border-b border-border bg-white/80 backdrop-blur-sm">
           <SidebarTrigger className="text-muted-foreground hover:text-foreground" />
           <div className="h-4 w-px bg-border" />
           <nav className="flex items-center gap-1 text-xs text-muted-foreground">

@@ -5,7 +5,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import {
   Globe, Sparkles, Save, RotateCcw, Building2, AlertCircle,
-  Check, Loader2, Image as ImageIcon, Link2,
+  Check, Loader2, Link2,
 } from "lucide-react";
 import type { BrandProfile, BrandAnalysisResult } from "@/lib/types";
 import { VOICES, VOICE_STYLES, AVATARS, SCRIPT_STYLES, CAPTION_STYLES, SCENE_PRESETS } from "@/lib/config";
@@ -59,7 +59,6 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
   const [analyzeSuccess, setAnalyzeSuccess] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // Local form state (mirrors brand, user edits before saving)
   const [form, setForm] = useState<BrandProfile>({ ...brand });
 
   const hasChanges = JSON.stringify(form) !== JSON.stringify(brand) || websiteUrl !== brand.websiteUrl;
@@ -135,14 +134,14 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
               <RotateCcw className="w-3.5 h-3.5" /> Reset
             </Button>
           )}
-          <Button onClick={save} size="sm" className={saved ? "bg-emerald-600 hover:bg-emerald-600" : ""}>
+          <Button onClick={save} size="sm" className={saved ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}>
             {saved ? <><Check className="w-4 h-4" /> Saved!</> : <><Save className="w-4 h-4" /> Save Profile</>}
           </Button>
         </div>
       </div>
 
       {/* ── Website Analyzer ── */}
-      <div className="bg-gradient-to-br from-primary/5 to-transparent border border-primary/20 rounded-xl p-5 space-y-4">
+      <div className="bg-violet-50 border border-violet-100 rounded-xl p-5 space-y-4">
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-primary" />
           <h3 className="text-sm font-semibold text-primary">AI Brand Analyzer</h3>
@@ -160,7 +159,7 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
               onChange={(e) => setWebsiteUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !analyzing && analyzeWebsite()}
               placeholder="https://yourcompany.com"
-              className="input pl-9"
+              className="input pl-9 bg-white"
             />
           </div>
           <Button onClick={analyzeWebsite} disabled={analyzing || !websiteUrl.trim()} className="flex-shrink-0">
@@ -179,22 +178,22 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
           </div>
         )}
         {analyzeSuccess && (
-          <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
-            <Check className="w-3.5 h-3.5 flex-shrink-0" />
-            Brand profile populated from {new URL(websiteUrl).hostname}. Review and save.
+          <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+            <Check className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+            Brand profile populated from {(() => { try { return new URL(websiteUrl).hostname; } catch { return websiteUrl; } })()}. Review and save.
           </div>
         )}
         {analyzeError && (
-          <div className="flex items-start gap-2 text-xs text-red-400 bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
-            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <div className="flex items-start gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
             <span>{analyzeError}</span>
           </div>
         )}
       </div>
 
       {/* ── Company Identity ── */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-5">
-        <Section title="Company Identity" badge="Identity">
+      <div className="bg-white border border-border rounded-xl p-5 space-y-5">
+        <Section title="Company Identity">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Company Name">
               <input type="text" value={form.companyName} onChange={(e) => setF("companyName", e.target.value)}
@@ -218,7 +217,7 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
                 <button key={t} onClick={() => setF("tone", t)}
                   className={cn(
                     "px-3 py-1.5 rounded-lg border text-xs font-medium capitalize transition-all",
-                    form.tone === t ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"
+                    form.tone === t ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
                   )}
                 >{t}</button>
               ))}
@@ -228,7 +227,7 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
       </div>
 
       {/* ── Visual Identity ── */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-5">
+      <div className="bg-white border border-border rounded-xl p-5 space-y-5">
         <Section title="Visual Identity">
           <Field label="Brand Logo URL" hint="Displayed in the top-right of every video">
             <div className="flex gap-2">
@@ -238,12 +237,12 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
                   placeholder="https://example.com/logo.png" className="input pl-9" />
               </div>
               {form.logoUrl && (
-                <div className="w-10 h-10 rounded-lg border border-border bg-background flex items-center justify-center overflow-hidden flex-shrink-0">
+                <div className="w-10 h-10 rounded-lg border border-border bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
                   <img src={form.logoUrl} alt="logo preview" className="w-full h-full object-contain"
                     onError={(e) => {
                       e.currentTarget.style.display = "none";
-                      const parent = e.currentTarget.parentElement;
-                      if (parent) parent.innerHTML = '<div class="text-muted-foreground text-[10px]">Error</div>';
+                      const p = e.currentTarget.parentElement;
+                      if (p) p.innerHTML = '<span class="text-muted-foreground text-[10px]">Error</span>';
                     }}
                   />
                 </div>
@@ -258,7 +257,7 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
           </div>
 
           {/* Color preview strip */}
-          <div className="rounded-lg overflow-hidden h-8 flex">
+          <div className="rounded-lg overflow-hidden h-8 flex shadow-sm">
             <div className="flex-[2]" style={{ background: `linear-gradient(135deg, ${form.backgroundColor}, ${form.secondaryColor})` }} />
             <div className="flex-1" style={{ background: form.primaryColor }} />
           </div>
@@ -271,13 +270,13 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
       </div>
 
       {/* ── Default Video Settings ── */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-5">
+      <div className="bg-white border border-border rounded-xl p-5 space-y-5">
         <Section title="Default Video Settings" badge="Optional">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Default Voice">
               <select value={form.defaultVoice} onChange={(e) => { setF("defaultVoice", e.target.value); setF("defaultVoiceStyle", ""); }}
                 className="input cursor-pointer text-xs">
-                {VOICES.map((v) => <option key={v.value} value={v.value} className="bg-card">{v.label}</option>)}
+                {VOICES.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
               </select>
             </Field>
             <Field label="Voice Emotion">
@@ -286,8 +285,8 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
                 return (
                   <select value={form.defaultVoiceStyle} onChange={(e) => setF("defaultVoiceStyle", e.target.value)}
                     disabled={opts.length === 0} className="input cursor-pointer text-xs disabled:opacity-40">
-                    <option value="" className="bg-card">Default</option>
-                    {opts.map((o) => <option key={o.value} value={o.value} className="bg-card">{o.label}</option>)}
+                    <option value="">Default</option>
+                    {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 );
               })()}
@@ -300,7 +299,7 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
                 <button key={key} onClick={() => { setF("defaultAvatar", key); setF("defaultAvatarStyle", AVATARS[key]?.styles[0] ?? ""); }}
                   className={cn(
                     "flex flex-col items-center gap-1 py-2.5 rounded-lg border text-xs font-medium transition-all",
-                    form.defaultAvatar === key ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40"
+                    form.defaultAvatar === key ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
                   )}
                 >
                   <span className="text-lg">{emoji}</span>
@@ -318,7 +317,7 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
                 <button key={s.value} onClick={() => setF("defaultScriptStyle", s.value)}
                   className={cn(
                     "flex flex-col items-center gap-1 py-2.5 rounded-lg border text-xs font-medium transition-all",
-                    form.defaultScriptStyle === s.value ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40"
+                    form.defaultScriptStyle === s.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
                   )}
                 >
                   <span className="text-base">{s.emoji}</span>
@@ -334,7 +333,7 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
                 <button key={p.value} onClick={() => setF("defaultScenePreset", p.value)}
                   className={cn(
                     "flex flex-col items-center gap-1 py-2.5 rounded-lg border text-xs font-medium transition-all",
-                    form.defaultScenePreset === p.value ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40"
+                    form.defaultScenePreset === p.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
                   )}
                 >
                   {p.emoji ? <span className="text-base">{p.emoji}</span> : (
@@ -355,7 +354,7 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
                 <button key={c.value} onClick={() => setF("defaultCaptionStyle", c.value)}
                   className={cn(
                     "flex-1 flex flex-col items-center gap-1 py-2 rounded-lg border text-xs font-medium transition-all",
-                    form.defaultCaptionStyle === c.value ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40"
+                    form.defaultCaptionStyle === c.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
                   )}
                 >
                   <span className="text-base">{c.emoji}</span>
@@ -367,14 +366,14 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
         </Section>
       </div>
 
-      {/* ── Save bar ── */}
-      <div className="sticky bottom-6 bg-card border border-border rounded-xl px-5 py-4 flex items-center justify-between shadow-xl shadow-black/30">
+      {/* ── Sticky save bar ── */}
+      <div className="sticky bottom-6 bg-white border border-border rounded-xl px-5 py-4 flex items-center justify-between shadow-lg shadow-gray-200/60">
         <div className="text-sm text-muted-foreground">
           {hasChanges ? "You have unsaved changes" : "All changes saved"}
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setForm({ ...brand })}>Discard</Button>
-          <Button size="sm" onClick={save} className={saved ? "bg-emerald-600 hover:bg-emerald-600" : ""}>
+          <Button size="sm" onClick={save} className={saved ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}>
             {saved ? <><Check className="w-4 h-4" /> Saved!</> : <><Save className="w-4 h-4" /> Save Profile</>}
           </Button>
         </div>

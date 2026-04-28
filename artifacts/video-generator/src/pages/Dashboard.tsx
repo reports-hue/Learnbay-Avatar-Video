@@ -39,17 +39,17 @@ export function Dashboard({ brand, library, setPage }: Props) {
 
       {/* ── Brand setup CTA (if not configured) ── */}
       {!hasBrand && (
-        <div className="bg-amber-950/30 border border-amber-700/40 rounded-xl p-5 flex items-start gap-4">
-          <div className="w-9 h-9 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-            <Building2 className="w-4.5 h-4.5 text-amber-400" />
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-start gap-4">
+          <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <Building2 className="w-4.5 h-4.5 text-amber-600" />
           </div>
           <div className="flex-1">
-            <h3 className="text-sm font-semibold text-amber-300">Set up your Brand Profile</h3>
-            <p className="text-xs text-amber-400/80 mt-0.5">
+            <h3 className="text-sm font-semibold text-amber-800">Set up your Brand Profile</h3>
+            <p className="text-xs text-amber-700 mt-0.5">
               Add your company details, logo, and brand colors. Our AI can auto-detect everything from your website.
             </p>
           </div>
-          <Button size="sm" variant="outline" onClick={() => setPage("settings")} className="flex-shrink-0 border-amber-700/40 text-amber-300 hover:text-amber-200">
+          <Button size="sm" variant="outline" onClick={() => setPage("settings")} className="flex-shrink-0 border-amber-300 text-amber-700 hover:bg-amber-100">
             Set up <ArrowRight className="w-3.5 h-3.5" />
           </Button>
         </div>
@@ -58,14 +58,16 @@ export function Dashboard({ brand, library, setPage }: Props) {
       {/* ── Stats row ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         {[
-          { label: "Total Videos", value: library.length, icon: Film, color: "text-violet-400" },
-          { label: "This Week",    value: weekCount,       icon: TrendingUp, color: "text-emerald-400" },
-          { label: "Brand",        value: hasBrand ? "Active" : "Not set",   icon: Building2, color: hasBrand ? "text-emerald-400" : "text-amber-400" },
+          { label: "Total Videos", value: library.length, icon: Film,       color: "text-violet-600",  bg: "bg-violet-50"  },
+          { label: "This Week",    value: weekCount,       icon: TrendingUp, color: "text-emerald-600", bg: "bg-emerald-50" },
+          { label: "Brand",        value: hasBrand ? "Active" : "Not set",   icon: Building2, color: hasBrand ? "text-emerald-600" : "text-amber-600", bg: hasBrand ? "bg-emerald-50" : "bg-amber-50" },
         ].map((stat) => (
-          <div key={stat.label} className="bg-card border border-border rounded-xl p-4 space-y-2">
+          <div key={stat.label} className="bg-white border border-border rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground font-medium">{stat.label}</span>
-              <stat.icon className={cn("w-3.5 h-3.5", stat.color)} />
+              <div className={cn("w-7 h-7 rounded-lg flex items-center justify-center", stat.bg)}>
+                <stat.icon className={cn("w-3.5 h-3.5", stat.color)} />
+              </div>
             </div>
             <p className={cn("text-2xl font-bold", stat.color)}>{stat.value}</p>
           </div>
@@ -73,8 +75,8 @@ export function Dashboard({ brand, library, setPage }: Props) {
       </div>
 
       {/* ── Quick create ── */}
-      <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent border border-primary/20 rounded-xl p-6 flex items-center gap-5">
-        <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center flex-shrink-0">
+      <div className="bg-gradient-to-br from-violet-50 to-white border border-violet-100 rounded-xl p-6 flex items-center gap-5">
+        <div className="w-12 h-12 rounded-xl bg-violet-100 flex items-center justify-center flex-shrink-0">
           <Clapperboard className="w-6 h-6 text-primary" />
         </div>
         <div className="flex-1">
@@ -101,8 +103,8 @@ export function Dashboard({ brand, library, setPage }: Props) {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {recent.map((video) => (
-              <div key={video.id} className="bg-card border border-border rounded-xl overflow-hidden group hover:border-primary/30 transition-colors">
-                <div className="aspect-video bg-background relative overflow-hidden">
+              <div key={video.id} className="bg-white border border-border rounded-xl overflow-hidden group hover:border-primary/30 hover:shadow-sm transition-all">
+                <div className="aspect-video bg-gray-100 relative overflow-hidden">
                   <video
                     src={video.videoUrl}
                     className="w-full h-full object-cover"
@@ -113,7 +115,6 @@ export function Dashboard({ brand, library, setPage }: Props) {
                       if (el) el.innerHTML = `<div class="w-full h-full flex items-center justify-center text-muted-foreground text-xs">Video unavailable</div>`;
                     }}
                   />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
                 </div>
                 <div className="p-3 space-y-1.5">
                   <p className="text-sm font-medium text-foreground line-clamp-1">{video.topic}</p>
@@ -133,7 +134,9 @@ export function Dashboard({ brand, library, setPage }: Props) {
       {/* ── Empty state ── */}
       {library.length === 0 && (
         <div className="text-center py-16 space-y-3">
-          <Film className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+          <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto">
+            <Film className="w-8 h-8 text-muted-foreground/50" />
+          </div>
           <p className="text-muted-foreground text-sm">No videos yet.</p>
           <Button variant="outline" size="sm" onClick={() => setPage("create")}>
             Create your first video

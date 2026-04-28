@@ -20,6 +20,12 @@
   --color-accent: hsl(var(--accent));
   --color-accent-foreground: hsl(var(--accent-foreground));
   --color-destructive: hsl(var(--destructive));
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
   --font-sans: var(--app-font-sans);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -28,24 +34,44 @@
 }
 
 :root {
-  --background: 240 10% 7%;
-  --foreground: 240 10% 96%;
-  --border: 240 8% 18%;
-  --input: 240 8% 18%;
-  --ring: 262 83% 68%;
-  --card: 240 10% 11%;
-  --card-foreground: 240 10% 96%;
-  --primary: 262 83% 68%;
+  /* ── Core ── */
+  --background:  0 0% 98%;
+  --foreground:  224 71% 4%;
+  --border:      220 13% 91%;
+  --input:       220 13% 91%;
+  --ring:        262 80% 56%;
+  --radius:      0.625rem;
+
+  /* ── Cards ── */
+  --card:             0 0% 100%;
+  --card-foreground:  224 71% 4%;
+
+  /* ── Primary – violet ── */
+  --primary:            262 80% 56%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 240 8% 16%;
-  --secondary-foreground: 240 10% 80%;
-  --muted: 240 8% 14%;
-  --muted-foreground: 240 8% 55%;
-  --accent: 262 83% 68%;
+
+  /* ── Secondary / muted ── */
+  --secondary:            220 14% 96%;
+  --secondary-foreground: 215 16% 40%;
+  --muted:                220 14% 95%;
+  --muted-foreground:     215 16% 47%;
+
+  /* ── Accent ── */
+  --accent:            262 80% 56%;
   --accent-foreground: 0 0% 100%;
+
+  /* ── Destructive ── */
   --destructive: 0 72% 51%;
+
+  /* ── Sidebar ── */
+  --sidebar:                   0 0% 100%;
+  --sidebar-foreground:        224 71% 4%;
+  --sidebar-accent:            220 14% 95%;
+  --sidebar-accent-foreground: 224 71% 4%;
+  --sidebar-border:            220 13% 91%;
+  --sidebar-ring:              262 80% 56%;
+
   --app-font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --radius: 0.625rem;
 }
 
 @layer base {
@@ -55,10 +81,10 @@
 
 @layer components {
   .input {
-    @apply w-full bg-background border border-border rounded-lg px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition disabled:opacity-50;
+    @apply w-full bg-white border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 transition disabled:opacity-50 disabled:bg-muted;
   }
   .label-xs {
-    @apply block text-xs font-semibold text-muted-foreground uppercase tracking-widest;
+    @apply block text-[11px] font-semibold text-muted-foreground uppercase tracking-widest;
   }
 }
 

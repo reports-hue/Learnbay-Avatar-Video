@@ -2,7 +2,6 @@ import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   ChevronLeft, ChevronRight, Sparkles, Check, Download,
   Library, RotateCcw, Building2, AlertCircle,
@@ -35,37 +34,10 @@ function Pill({ active, disabled, onClick, children, className }: {
     <button disabled={disabled} onClick={onClick}
       className={cn(
         "px-3 py-1.5 rounded-lg border text-xs font-medium transition-all",
-        active ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40",
+        active ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40",
         disabled && "opacity-50 cursor-not-allowed", className
       )}
     >{children}</button>
-  );
-}
-
-// ─── Card grid selector ─────────────────────────────────────────
-function CardGrid<T extends string>({
-  items, value, onChange, disabled, cols = "grid-cols-5",
-}: {
-  items: { value: T; label: string; emoji?: string | null; desc?: string }[];
-  value: T; onChange: (v: T) => void; disabled?: boolean; cols?: string;
-}) {
-  return (
-    <div className={cn("grid gap-2", cols)}>
-      {items.map((item) => (
-        <button key={item.value} disabled={disabled} onClick={() => onChange(item.value)}
-          title={item.desc}
-          className={cn(
-            "flex flex-col items-center gap-1.5 py-2.5 rounded-lg border text-xs font-medium transition-all",
-            value === item.value ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
-            disabled && "opacity-50 cursor-not-allowed"
-          )}
-        >
-          {item.emoji && <span className="text-lg leading-none">{item.emoji}</span>}
-          <span className="leading-tight text-center px-1">{item.label}</span>
-          {item.desc && <span className="text-[10px] opacity-60 leading-none">{item.desc}</span>}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -83,7 +55,6 @@ function ColorInput({ label, value, onChange, disabled }: { label: string; value
   );
 }
 
-// ─── Section label ──────────────────────────────────────────────
 function SLabel({ children }: { children: React.ReactNode }) {
   return <p className="label-xs mb-2">{children}</p>;
 }
@@ -96,20 +67,20 @@ function StepBar({ step }: { step: number }) {
         <div key={s.id} className="flex items-center gap-1 flex-1 last:flex-initial">
           <div className={cn(
             "flex items-center gap-2 whitespace-nowrap",
-            step === s.id ? "text-primary" : step > s.id ? "text-emerald-400" : "text-muted-foreground"
+            step === s.id ? "text-primary" : step > s.id ? "text-emerald-600" : "text-muted-foreground"
           )}>
             <div className={cn(
               "w-6 h-6 rounded-full border-2 flex items-center justify-center text-[11px] font-bold flex-shrink-0",
-              step === s.id ? "border-primary bg-primary text-primary-foreground" :
-              step > s.id ? "border-emerald-500 bg-emerald-500/20 text-emerald-400" :
-              "border-border text-muted-foreground"
+              step === s.id ? "border-primary bg-primary text-white" :
+              step > s.id ? "border-emerald-500 bg-emerald-50 text-emerald-600" :
+              "border-border text-muted-foreground bg-white"
             )}>
               {step > s.id ? <Check className="w-3 h-3" /> : s.id}
             </div>
             <span className="text-xs font-medium hidden sm:inline">{s.label}</span>
           </div>
           {i < STEPS.length - 1 && (
-            <div className={cn("flex-1 h-px mx-1", step > s.id ? "bg-emerald-500/40" : "bg-border")} />
+            <div className={cn("flex-1 h-px mx-1", step > s.id ? "bg-emerald-300" : "bg-border")} />
           )}
         </div>
       ))}
@@ -127,15 +98,14 @@ interface Props {
 export function CreateVideo({ brand, addVideo, setPage }: Props) {
   const hasBrand = Boolean(brand.companyName);
 
-  // Steps
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Step 1: Content
+  // Step 1
   const [topic, setTopic] = useState("");
   const [platform, setPlatform] = useState("YouTube Shorts");
   const [scriptStyle, setScriptStyle] = useState(brand.defaultScriptStyle || "viral");
 
-  // Step 2: Brand
+  // Step 2
   const [brandMode, setBrandMode] = useState<"saved" | "custom">(hasBrand ? "saved" : "custom");
   const [scenePreset, setScenePreset] = useState(brand.defaultScenePreset || "auto");
   const [customPrimary, setCustomPrimary] = useState(brand.primaryColor || "#7C3AED");
@@ -144,14 +114,14 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   const [customCta, setCustomCta] = useState(brand.defaultCta || "");
   const [bgImageUrl, setBgImageUrl] = useState("");
 
-  // Step 3: Avatar
+  // Step 3
   const [avatar, setAvatar] = useState(brand.defaultAvatar || "lisa");
   const [avatarStyle, setAvatarStyle] = useState(brand.defaultAvatarStyle || "graceful-sitting");
   const [voice, setVoice] = useState(brand.defaultVoice || "en-US-AvaMultilingualNeural");
   const [voiceStyle, setVoiceStyle] = useState(brand.defaultVoiceStyle || "");
   const [captionStyle, setCaptionStyle] = useState(brand.defaultCaptionStyle || "animated");
 
-  // Generation state
+  // Generation
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const [liveScript, setLiveScript] = useState<string | null>(null);
@@ -197,7 +167,6 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       };
     }
 
-    // Custom mode
     const preset = SCENE_PRESETS.find((p) => p.value === scenePreset);
     const autoBackground = scenePreset === "auto";
     let backgroundColor: string | undefined;
@@ -231,7 +200,6 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-
     const payload = buildPayload();
     const cleanPayload = Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined));
 
@@ -244,7 +212,6 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       });
 
       if (!resp.body) throw new Error("No response stream");
-
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
@@ -346,13 +313,25 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
           <div className="space-y-1.5">
             <SLabel>Platform</SLabel>
             <select value={platform} onChange={(e) => setPlatform(e.target.value)} className="input cursor-pointer">
-              {PLATFORMS.map((p) => <option key={p.value} value={p.value} className="bg-card">{p.label}</option>)}
+              {PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
           </div>
 
           <div>
             <SLabel>Script Style</SLabel>
-            <CardGrid items={SCRIPT_STYLES} value={scriptStyle as typeof SCRIPT_STYLES[number]["value"]} onChange={setScriptStyle} cols="grid-cols-5" />
+            <div className="grid grid-cols-5 gap-2">
+              {SCRIPT_STYLES.map((s) => (
+                <button key={s.value} onClick={() => setScriptStyle(s.value)}
+                  className={cn(
+                    "flex flex-col items-center gap-1.5 py-2.5 rounded-lg border text-xs font-medium transition-all",
+                    scriptStyle === s.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                  )}
+                >
+                  <span className="text-lg">{s.emoji}</span>
+                  <span className="leading-tight text-center">{s.label}</span>
+                </button>
+              ))}
+            </div>
             <p className="text-xs text-muted-foreground mt-2">{SCRIPT_STYLES.find((s) => s.value === scriptStyle)?.desc}</p>
           </div>
 
@@ -367,7 +346,6 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       {/* ────────────────────────────────────────────── STEP 2 */}
       {step === 2 && (
         <div className="space-y-6">
-          {/* Brand mode toggle */}
           <div className="grid grid-cols-2 gap-3">
             {[
               { mode: "saved" as const, label: "Use Brand Profile", icon: Building2, desc: hasBrand ? `${brand.companyName} settings` : "Not configured yet", disabled: !hasBrand },
@@ -376,7 +354,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
               <button key={mode} onClick={() => !disabled && setBrandMode(mode)} disabled={disabled}
                 className={cn(
                   "flex flex-col items-start gap-2 p-4 rounded-xl border text-left transition-all",
-                  brandMode === mode ? "border-primary bg-primary/10" : "border-border bg-card hover:border-primary/30",
+                  brandMode === mode ? "border-primary bg-violet-50" : "border-border bg-white hover:border-primary/30",
                   disabled && "opacity-50 cursor-not-allowed"
                 )}
               >
@@ -391,15 +369,14 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
           </div>
 
           {!hasBrand && brandMode === "saved" && (
-            <div className="flex items-start gap-3 bg-amber-950/30 border border-amber-700/40 rounded-xl p-4 text-xs text-amber-400">
-              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <div>No brand profile configured. <button className="underline" onClick={() => setPage("settings")}>Set it up in Brand Settings</button> or use Custom mode.</div>
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-700">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-500" />
+              <div>No brand profile configured. <button className="underline font-medium" onClick={() => setPage("settings")}>Set it up in Brand Settings</button> or use Custom mode.</div>
             </div>
           )}
 
-          {/* Saved brand preview */}
           {brandMode === "saved" && hasBrand && (
-            <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+            <div className="bg-white border border-border rounded-xl p-4 space-y-3">
               <div className="flex items-center gap-3">
                 {brand.logoUrl && (
                   <img src={brand.logoUrl} alt="" className="h-8 w-auto max-w-[80px] rounded object-contain"
@@ -411,18 +388,16 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                 </div>
               </div>
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-4 h-4 rounded-full border border-border" style={{ background: brand.primaryColor }} />
-                  Accent
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-4 h-4 rounded-full border border-border" style={{ background: brand.secondaryColor }} />
-                  Secondary
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-4 h-4 rounded-full border border-border" style={{ background: brand.backgroundColor }} />
-                  Background
-                </span>
+                {[
+                  { label: "Accent", color: brand.primaryColor },
+                  { label: "Secondary", color: brand.secondaryColor },
+                  { label: "Background", color: brand.backgroundColor },
+                ].map(({ label, color }) => (
+                  <span key={label} className="flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full border border-border" style={{ background: color }} />
+                    {label}
+                  </span>
+                ))}
               </div>
               {brand.defaultCta && (
                 <div className="text-xs text-muted-foreground">CTA: <span className="text-foreground font-medium">"{brand.defaultCta}"</span></div>
@@ -430,7 +405,6 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             </div>
           )}
 
-          {/* Custom mode controls */}
           {brandMode === "custom" && (
             <div className="space-y-5">
               <div>
@@ -440,7 +414,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                     <button key={p.value} onClick={() => handleScenePreset(p.value)}
                       className={cn(
                         "flex flex-col items-center gap-1.5 py-3 rounded-lg border text-xs font-medium transition-all",
-                        scenePreset === p.value ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40"
+                        scenePreset === p.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
                       )}
                     >
                       {p.emoji ? (
@@ -460,7 +434,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                     placeholder="https://example.com/background.jpg" className="input mt-2" />
                 )}
                 {scenePreset === "auto" && (
-                  <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1"><Sparkles className="w-3 h-3" /> AI picks gradient colors for your topic</p>
+                  <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1"><Sparkles className="w-3 h-3 text-primary" /> AI picks gradient colors for your topic</p>
                 )}
               </div>
 
@@ -506,7 +480,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                 <button key={key} onClick={() => handleAvatarChange(key)}
                   className={cn(
                     "flex flex-col items-center gap-1.5 py-3 rounded-lg border text-xs font-medium transition-all",
-                    avatar === key ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40"
+                    avatar === key ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
                   )}
                 >
                   <span className="text-xl">{emoji}</span>
@@ -531,14 +505,14 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             <div className="space-y-1.5">
               <SLabel>Voice</SLabel>
               <select value={voice} onChange={(e) => handleVoiceChange(e.target.value)} className="input cursor-pointer text-xs">
-                {VOICES.map((v) => <option key={v.value} value={v.value} className="bg-card">{v.label}</option>)}
+                {VOICES.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
               </select>
             </div>
             <div className="space-y-1.5">
-              <SLabel>Voice Emotion {voiceStyleOptions.length === 0 && <span className="normal-case font-normal">(n/a for this voice)</span>}</SLabel>
+              <SLabel>Voice Emotion</SLabel>
               <select value={voiceStyle} onChange={(e) => setVoiceStyle(e.target.value)} disabled={voiceStyleOptions.length === 0} className="input cursor-pointer text-xs disabled:opacity-40">
-                <option value="" className="bg-card">Default</option>
-                {voiceStyleOptions.map((s) => <option key={s.value} value={s.value} className="bg-card">{s.label}</option>)}
+                <option value="">Default</option>
+                {voiceStyleOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
           </div>
@@ -550,12 +524,12 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                 <button key={c.value} onClick={() => setCaptionStyle(c.value)}
                   className={cn(
                     "flex-1 flex flex-col items-center gap-1 py-2.5 rounded-lg border text-xs font-medium transition-all",
-                    captionStyle === c.value ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40"
+                    captionStyle === c.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
                   )}
                 >
                   <span className="text-base">{c.emoji}</span>
                   <span>{c.label}</span>
-                  <span className="text-[10px] opacity-60">{c.desc}</span>
+                  <span className="text-[10px] text-muted-foreground">{c.desc}</span>
                 </button>
               ))}
             </div>
@@ -571,9 +545,8 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       {/* ────────────────────────────────────────────── STEP 4 */}
       {step === 4 && (
         <div className="space-y-6">
-          {/* Summary */}
           {!result && (
-            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+            <div className="bg-white border border-border rounded-xl p-5 space-y-4">
               <h3 className="text-sm font-semibold text-foreground">Generation Summary</h3>
               <div className="grid grid-cols-2 gap-y-3 gap-x-4 text-xs">
                 {[
@@ -594,9 +567,8 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             </div>
           )}
 
-          {/* Generate button */}
           {!result && !isGenerating && (
-            <Button size="lg" className="w-full text-base h-12 shadow-lg shadow-primary/20" onClick={generate} disabled={!topic.trim()}>
+            <Button size="lg" className="w-full text-base h-12 shadow-sm" onClick={generate} disabled={!topic.trim()}>
               <Sparkles className="w-5 h-5" />
               Generate Avatar Video
             </Button>
@@ -604,16 +576,15 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
 
           {/* Progress */}
           {isGenerating && progress && (
-            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+            <div className="bg-white border border-border rounded-xl p-5 space-y-4">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>{progress.message}</span>
-                  <span className="font-mono tabular-nums">{progress.percent}%</span>
+                  <span className="font-mono tabular-nums font-medium text-foreground">{progress.percent}%</span>
                 </div>
                 <Progress value={progress.percent} className="h-1.5" />
               </div>
 
-              {/* Phase pills */}
               <div className="grid grid-cols-4 gap-1.5 text-[10px]">
                 {[
                   { key: "script_done", label: "Script" },
@@ -628,9 +599,9 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   return (
                     <div key={key} className={cn(
                       "text-center font-semibold py-1.5 rounded-lg border transition-all",
-                      isComplete ? "border-emerald-500 text-emerald-400 bg-emerald-500/10" :
-                      isActive   ? "border-primary text-primary bg-primary/10" :
-                                   "border-border text-muted-foreground bg-background"
+                      isComplete ? "border-emerald-300 text-emerald-700 bg-emerald-50" :
+                      isActive   ? "border-primary text-primary bg-violet-50" :
+                                   "border-border text-muted-foreground bg-gray-50"
                     )}>
                       {isComplete ? "✓ " : isActive ? "⟳ " : ""}{label}
                     </div>
@@ -638,11 +609,10 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                 })}
               </div>
 
-              {/* Live script preview */}
               {liveScript && (
                 <details>
                   <summary className="text-xs text-muted-foreground cursor-pointer select-none">Preview script ▾</summary>
-                  <div className="mt-2 bg-background border border-border rounded-lg p-3 text-xs text-muted-foreground max-h-24 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                  <div className="mt-2 bg-gray-50 border border-border rounded-lg p-3 text-xs text-muted-foreground max-h-24 overflow-y-auto whitespace-pre-wrap leading-relaxed">
                     {liveScript}
                   </div>
                 </details>
@@ -652,10 +622,10 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
 
           {/* Error */}
           {genError && (
-            <div className="bg-destructive/10 border border-destructive/50 rounded-xl p-4 text-sm text-red-400 space-y-1">
-              <p className="font-semibold flex items-center gap-2"><AlertCircle className="w-4 h-4" /> Generation failed</p>
-              <p className="text-xs opacity-80">{genError}</p>
-              <Button size="sm" variant="outline" className="mt-2 border-destructive/40 text-red-400" onClick={() => setGenError(null)}>
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 space-y-1">
+              <p className="font-semibold flex items-center gap-2"><AlertCircle className="w-4 h-4 text-red-500" /> Generation failed</p>
+              <p className="text-xs text-red-600">{genError}</p>
+              <Button size="sm" variant="outline" className="mt-2 border-red-200 text-red-600 hover:bg-red-50" onClick={() => setGenError(null)}>
                 Try Again
               </Button>
             </div>
@@ -663,15 +633,15 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
 
           {/* Result */}
           {result && (
-            <div className="bg-card border border-border rounded-xl p-5 space-y-5">
+            <div className="bg-white border border-border rounded-xl p-5 space-y-5">
               <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
                 </div>
                 <h3 className="text-sm font-semibold text-foreground">Video Generated!</h3>
                 <div className="ml-auto flex items-center gap-1.5">
                   {[result.brandTheme.bgColor1, result.brandTheme.bgColor2, result.brandTheme.accentColor].map((c, i) => (
-                    <span key={i} className="w-3.5 h-3.5 rounded-full border border-white/10" style={{ background: c }} />
+                    <span key={i} className="w-3.5 h-3.5 rounded-full border border-border shadow-sm" style={{ background: c }} />
                   ))}
                 </div>
               </div>
@@ -680,7 +650,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
 
               <div className="flex gap-2">
                 <a href={result.videoUrl} download="libraryminds-video.mp4" className="flex-1">
-                  <Button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white" size="sm">
+                  <Button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" size="sm">
                     <Download className="w-4 h-4" /> Download MP4
                   </Button>
                 </a>
@@ -696,14 +666,13 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                 <summary className="text-xs text-muted-foreground cursor-pointer select-none flex items-center gap-1">
                   <span>▶</span> View script
                 </summary>
-                <div className="mt-2 bg-background border border-border rounded-lg p-3 text-xs text-muted-foreground leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
+                <div className="mt-2 bg-gray-50 border border-border rounded-lg p-3 text-xs text-muted-foreground leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
                   {result.script}
                 </div>
               </details>
             </div>
           )}
 
-          {/* Back button */}
           {!isGenerating && !result && (
             <div className="flex justify-between">
               <Button variant="outline" onClick={() => setStep(3)}><ChevronLeft className="w-4 h-4" /> Back</Button>

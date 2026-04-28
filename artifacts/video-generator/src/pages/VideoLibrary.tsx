@@ -90,7 +90,9 @@ export function VideoLibrary({ library, removeVideo, setPage }: Props) {
         </div>
       ) : (
         <div className="text-center py-20 space-y-4">
-          <Film className="w-12 h-12 text-muted-foreground/30 mx-auto" />
+          <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto">
+            <Film className="w-8 h-8 text-muted-foreground/40" />
+          </div>
           <div>
             <p className="text-foreground font-medium">No videos yet</p>
             <p className="text-sm text-muted-foreground mt-1">Create your first AI avatar video to get started.</p>
@@ -112,9 +114,9 @@ function VideoCard({ video, confirmDelete, onDelete }: {
   const [videoError, setVideoError] = useState(false);
 
   return (
-    <div className="bg-card border border-border rounded-xl overflow-hidden group hover:border-primary/30 transition-all">
+    <div className="bg-white border border-border rounded-xl overflow-hidden group hover:border-primary/30 hover:shadow-sm transition-all">
       {/* Thumbnail / preview */}
-      <div className="aspect-video bg-black relative overflow-hidden">
+      <div className="aspect-video bg-gray-100 relative overflow-hidden">
         {!videoError ? (
           <video
             src={video.videoUrl}
@@ -125,12 +127,12 @@ function VideoCard({ video, confirmDelete, onDelete }: {
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
-            <Film className="w-7 h-7 opacity-40" />
+            <Film className="w-7 h-7 opacity-30" />
             <span className="text-xs opacity-50">Video unavailable</span>
           </div>
         )}
 
-        {/* Brand theme strip */}
+        {/* Brand theme color strip */}
         {video.brandTheme && (
           <div className="absolute bottom-0 left-0 right-0 h-1 flex">
             <div className="flex-1" style={{ background: video.brandTheme.bgColor1 }} />
@@ -141,9 +143,7 @@ function VideoCard({ video, confirmDelete, onDelete }: {
 
       {/* Info */}
       <div className="p-4 space-y-3">
-        <div>
-          <p className="text-sm font-semibold text-foreground line-clamp-2 leading-snug">{video.topic}</p>
-        </div>
+        <p className="text-sm font-semibold text-foreground line-clamp-2 leading-snug">{video.topic}</p>
 
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge variant="secondary" className="text-[10px] py-0">{video.platform}</Badge>
@@ -169,8 +169,8 @@ function VideoCard({ video, confirmDelete, onDelete }: {
             className={cn(
               "text-xs px-2.5 transition-all",
               confirmDelete === video.id
-                ? "border-destructive text-destructive bg-destructive/10"
-                : "text-muted-foreground hover:text-red-400"
+                ? "border border-red-200 text-red-600 bg-red-50 hover:bg-red-100"
+                : "text-muted-foreground hover:text-red-500 hover:bg-red-50"
             )}
           >
             {confirmDelete === video.id ? (
