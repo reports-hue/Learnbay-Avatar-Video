@@ -153,7 +153,7 @@ export default function App() {
             <CreateVideo brand={brand} addVideo={addVideo} setPage={setPage} />
           )}
           {page === "library" && (
-            <VideoLibrary library={library} removeVideo={removeVideo} setPage={setPage} />
+            <VideoLibrary library={library} addVideo={addVideo} removeVideo={removeVideo} setPage={setPage} />
           )}
           {page === "settings" && (
             <BrandSettings brand={brand} updateBrand={updateBrand} resetBrand={resetBrand} />

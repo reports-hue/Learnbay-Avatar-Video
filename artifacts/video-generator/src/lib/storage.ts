@@ -50,11 +50,14 @@ export function useVideoLibrary(): [VideoEntry[], (entry: VideoEntry) => void, (
   );
 
   const addEntry = useCallback((entry: VideoEntry) => {
-    setLibrary((prev) => {
-      const next = [entry, ...prev].slice(0, 50); // keep last 50 videos
-      writeJson(LIBRARY_KEY, next);
-      return next;
-    });
+    // Write synchronously FIRST so the video is saved even if the React
+    // render that follows throws an error (which would skip the state updater).
+    const current = readJson<VideoEntry[]>(LIBRARY_KEY, []);
+    // Deduplicate by id
+    const deduped = current.filter((v) => v.id !== entry.id);
+    const next = [entry, ...deduped].slice(0, 50);
+    writeJson(LIBRARY_KEY, next);
+    setLibrary(next);
   }, []);
 
   const removeEntry = useCallback((id: string) => {

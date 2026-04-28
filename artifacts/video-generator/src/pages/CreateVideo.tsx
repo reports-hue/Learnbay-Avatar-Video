@@ -498,10 +498,8 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             script: job.result.script,
             brandTheme: job.result.brandTheme,
           };
-          setResult(r);
-          setLiveScript(r.script);
-          setProgress({ step: "done", percent: 100, message: "Your video is ready!" });
-          setIsGenerating(false);
+          // Save to library FIRST (synchronous write) before any React
+          // state updates that could trigger a crashing render.
           addVideo({
             id: r.videoId,
             topic: topic.trim() || "Video",
@@ -516,6 +514,10 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             brandTheme: r.brandTheme,
             createdAt: new Date().toISOString(),
           });
+          setResult(r);
+          setLiveScript(r.script);
+          setProgress({ step: "done", percent: 100, message: "Your video is ready!" });
+          setIsGenerating(false);
         } else if (job.status === "failed") {
           stopPolling();
           localStorage.removeItem(PENDING_JOB_KEY);
@@ -1351,11 +1353,13 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   <Check className="w-3.5 h-3.5 text-emerald-600" />
                 </div>
                 <h3 className="text-sm font-semibold text-foreground">Video Generated!</h3>
-                <div className="ml-auto flex items-center gap-1.5">
-                  {[result.brandTheme.bgColor1, result.brandTheme.bgColor2, result.brandTheme.accentColor].map((c, i) => (
-                    <span key={i} className="w-3.5 h-3.5 rounded-full border border-border shadow-sm" style={{ background: c }} />
-                  ))}
-                </div>
+                {result.brandTheme && (
+                  <div className="ml-auto flex items-center gap-1.5">
+                    {[result.brandTheme.bgColor1, result.brandTheme.bgColor2, result.brandTheme.accentColor].filter(Boolean).map((c, i) => (
+                      <span key={i} className="w-3.5 h-3.5 rounded-full border border-border shadow-sm" style={{ background: c }} />
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Thumbnail preview (if available) */}

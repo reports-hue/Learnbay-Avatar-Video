@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Film, Download, Trash2, Search, Plus, Clock, Play } from "lucide-react";
+import { Film, Download, Trash2, Search, Plus, Clock, Play, RefreshCw } from "lucide-react";
 import type { VideoEntry, Page } from "@/lib/types";
 import { SCRIPT_STYLES } from "@/lib/config";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ import { VideoModal } from "@/components/VideoModal";
 
 interface Props {
   library: VideoEntry[];
+  addVideo: (entry: VideoEntry) => void;
   removeVideo: (id: string) => void;
   setPage: (p: Page) => void;
 }
@@ -23,10 +24,49 @@ function styleLabel(val: string) {
   return SCRIPT_STYLES.find((s) => s.value === val)?.label ?? val;
 }
 
-export function VideoLibrary({ library, removeVideo, setPage }: Props) {
+export function VideoLibrary({ library, addVideo, removeVideo, setPage }: Props) {
   const [query, setQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [playingVideo, setPlayingVideo] = useState<VideoEntry | null>(null);
+  const [recovering, setRecovering] = useState(false);
+  const [recoverMsg, setRecoverMsg] = useState<string | null>(null);
+
+  async function recoverVideos() {
+    setRecovering(true);
+    setRecoverMsg(null);
+    try {
+      const res = await fetch("/api/videos");
+      if (!res.ok) throw new Error("Server error");
+      const serverVideos = await res.json() as {
+        videoId: string; videoUrl: string;
+        thumbnailUrl: string | null; createdAt: string; sizeBytes: number;
+      }[];
+      const existingIds = new Set(library.map((v) => v.id));
+      const toAdd = serverVideos.filter((v) => !existingIds.has(v.videoId));
+      if (toAdd.length === 0) {
+        setRecoverMsg("No new videos found to recover.");
+      } else {
+        toAdd.forEach((v) => addVideo({
+          id: v.videoId,
+          topic: "Recovered video",
+          platform: "unknown",
+          scriptStyle: "viral",
+          captionStyle: "animated",
+          voice: "",
+          avatar: "lisa",
+          videoUrl: v.videoUrl,
+          thumbnailUrl: v.thumbnailUrl ?? undefined,
+          script: "",
+          createdAt: v.createdAt,
+        }));
+        setRecoverMsg(`Recovered ${toAdd.length} video${toAdd.length > 1 ? "s" : ""}.`);
+      }
+    } catch {
+      setRecoverMsg("Recovery failed — server may be starting up.");
+    } finally {
+      setRecovering(false);
+    }
+  }
 
   const filtered = query.trim()
     ? library.filter((v) =>
@@ -61,10 +101,27 @@ export function VideoLibrary({ library, removeVideo, setPage }: Props) {
             {library.length} video{library.length !== 1 ? "s" : ""} generated
           </p>
         </div>
-        <Button onClick={() => setPage("create")} size="sm">
-          <Plus className="w-4 h-4" /> Create New
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline" size="sm"
+            onClick={recoverVideos}
+            disabled={recovering}
+            title="Recover videos from server that may not have been saved locally"
+          >
+            <RefreshCw className={cn("w-4 h-4", recovering && "animate-spin")} />
+            {recovering ? "Recovering…" : "Recover"}
+          </Button>
+          <Button onClick={() => setPage("create")} size="sm">
+            <Plus className="w-4 h-4" /> Create New
+          </Button>
+        </div>
       </div>
+
+      {recoverMsg && (
+        <div className="text-sm text-muted-foreground bg-gray-50 border border-border rounded-lg px-4 py-2.5">
+          {recoverMsg}
+        </div>
+      )}
 
       {/* Search */}
       {library.length > 0 && (

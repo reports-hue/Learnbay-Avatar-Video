@@ -1,7 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { existsSync } from "fs";
+import { existsSync, readdirSync, statSync } from "fs";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
 import { generateScript, generateBrandTheme, researchCompanyForScript, type ScriptStyle } from "../services/openai.js";
@@ -264,6 +264,39 @@ router.post("/generate", async (req: Request, res: Response) => {
   runGenerationJob(jobId, body).catch(() => {});
 
   res.json({ jobId });
+});
+
+// ─── GET /api/jobs — list all completed job results (recovery) ────
+router.get("/jobs", (_req: Request, res: Response) => {
+  const completed = Array.from(jobs.entries())
+    .filter(([, j]) => j.status === "done" && j.result)
+    .map(([id, j]) => ({ jobId: id, ...j.result }));
+  res.json(completed);
+});
+
+// ─── GET /api/videos — scan outputs dir for all video files ────────
+router.get("/videos", (_req: Request, res: Response) => {
+  try {
+    const files = readdirSync(outputsDir)
+      .filter(f => f.startsWith("video_") && f.endsWith(".mp4"))
+      .map(f => {
+        const videoId = f.replace("video_", "").replace(".mp4", "");
+        const thumbFile = `thumb_${videoId}.jpg`;
+        const thumbExists = existsSync(path.join(outputsDir, thumbFile));
+        const stat = statSync(path.join(outputsDir, f));
+        return {
+          videoId,
+          videoUrl: `/api/video/${f}`,
+          thumbnailUrl: thumbExists ? `/api/video/${thumbFile}` : null,
+          createdAt: stat.mtime.toISOString(),
+          sizeBytes: stat.size,
+        };
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    res.json(files);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
 });
 
 // ─── GET /api/jobs/:jobId — poll job status ───────────────────────
