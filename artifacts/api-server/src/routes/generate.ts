@@ -20,6 +20,7 @@ export interface GenerateRequest {
   bgImageUrl?: string;
   logoUrl?: string;
   primaryColor?: string;
+  cta?: string;
 }
 
 router.post("/generate", async (req: Request, res: Response) => {
@@ -32,7 +33,8 @@ router.post("/generate", async (req: Request, res: Response) => {
     backgroundColor = "#FFFFFFFF",
     bgImageUrl,
     logoUrl,
-    primaryColor,
+    primaryColor = "#7C3AED",
+    cta,
   } = req.body as GenerateRequest;
 
   if (!topic || !platform) {
@@ -57,10 +59,13 @@ router.post("/generate", async (req: Request, res: Response) => {
     };
     const avatarVideoPath = await generateAvatarVideo(avatarConfig);
 
-    req.log.info("Step 3: Post-processing (logo, branding)");
+    req.log.info("Step 3: Post-processing (resize, logo, branding, CTA)");
     await postProcessAvatarVideo(avatarVideoPath, {
+      platform,
       logoUrl: logoUrl || undefined,
-      primaryColor: primaryColor || undefined,
+      primaryColor,
+      backgroundColor,
+      cta: cta || undefined,
     });
 
     res.json({

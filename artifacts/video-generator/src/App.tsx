@@ -83,7 +83,7 @@ export default function App() {
   const [bgImageUrl, setBgImageUrl] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const [primaryColor, setPrimaryColor] = useState("#7C3AED");
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [cta, setCta] = useState("");
 
   const [step, setStep] = useState<Step>("idle");
   const [loading, setLoading] = useState(false);
@@ -127,6 +127,7 @@ export default function App() {
         bgImageUrl: getBackgroundImage(),
         logoUrl: logoUrl.trim() || undefined,
         primaryColor,
+        cta: cta.trim() || undefined,
       };
 
       Object.keys(payload).forEach((k) => {
@@ -387,7 +388,21 @@ export default function App() {
                 className="input flex-1"
               />
             </div>
-            <p className="text-xs text-muted-foreground">Used as a branded accent bar at the bottom of the video</p>
+            <p className="text-xs text-muted-foreground">Shown as a colored accent bar at the bottom of the video</p>
+          </div>
+
+          {/* CTA */}
+          <div className="space-y-1.5">
+            <label className="label-xs">Call to Action (CTA) text — optional</label>
+            <input
+              type="text"
+              value={cta}
+              onChange={(e) => setCta(e.target.value)}
+              placeholder="e.g. Visit libraryminds.com | Try for free today!"
+              disabled={loading}
+              className="input"
+            />
+            <p className="text-xs text-muted-foreground">Overlaid as text at the bottom of the video</p>
           </div>
         </div>
 

@@ -30,6 +30,9 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api/assets", express.static(assetsDir));
+app.use("/api/assets", (_req, res) => {
+  res.status(404).json({ error: "Asset not found" });
+});
 app.use("/api", router);
 
 const viteFrontendPort = process.env.VITE_FRONTEND_PORT ?? "24396";
