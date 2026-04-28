@@ -43,10 +43,10 @@ const VOICES = [
 
 const BG_PRESETS = [
   { label: "White", value: "#FFFFFFFF" },
-  { label: "Black", value: "#FF000000" },
-  { label: "Light Gray", value: "#FFF0F0F0" },
-  { label: "Dark Blue", value: "#FF0D1B2A" },
-  { label: "Navy", value: "#FF1A1A2E" },
+  { label: "Black", value: "#000000FF" },
+  { label: "Light Gray", value: "#F0F0F0FF" },
+  { label: "Dark Blue", value: "#0D1B2AFF" },
+  { label: "Navy", value: "#1A1A2EFF" },
   { label: "Custom Color", value: "custom" },
   { label: "Custom Image URL", value: "image" },
 ];
@@ -99,7 +99,10 @@ export default function App() {
   }
 
   function getBackgroundColor(): string | undefined {
-    if (bgType === "custom") return customColor;
+    if (bgType === "custom") {
+      const hex = customColor.startsWith("#") ? customColor : "#" + customColor;
+      return hex.length === 7 ? hex + "FF" : hex;
+    }
     if (bgType === "image") return undefined;
     return bgType;
   }
@@ -310,7 +313,7 @@ export default function App() {
                   {bg.value !== "custom" && bg.value !== "image" ? (
                     <span
                       className="w-6 h-6 rounded-full border border-border"
-                      style={{ background: bg.value.replace(/FF(.{6})/, "#$1").slice(0, 7) }}
+                      style={{ background: bg.value.slice(0, 7) }}
                     />
                   ) : bg.value === "image" ? (
                     <span className="text-lg">🖼️</span>

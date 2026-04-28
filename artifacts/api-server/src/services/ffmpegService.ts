@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
 import { createWriteStream } from "fs";
+import fs from "fs/promises";
 import { logger } from "../lib/logger.js";
 
 if (ffmpegPath) {
@@ -44,6 +45,41 @@ function hexToFFmpeg(hex: string): string {
   const clean = hex.replace("#", "").slice(0, 6);
   if (/^[0-9a-fA-F]{6}$/.test(clean)) return `0x${clean}`;
   return "0x7C3AED";
+}
+
+async function generateAssFile(
+  cta: string,
+  outputPath: string,
+  durationSec: number,
+  w: number,
+  h: number
+): Promise<void> {
+  const endTime = formatAssTime(durationSec);
+  const fontSize = h >= 1080 ? 52 : 38;
+  const marginV = h >= 1080 ? 60 : 40;
+  const content = `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${w}
+PlayResY: ${h}
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: CTA,Arial,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2.5,0,2,20,20,${marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,${endTime},CTA,,0,0,0,,${cta}
+`;
+  await fs.writeFile(outputPath, content, "utf8");
+}
+
+function formatAssTime(totalSec: number): string {
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = Math.floor(totalSec % 60);
+  const cs = Math.floor((totalSec % 1) * 100);
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
 }
 
 export interface PostProcessOptions {
@@ -87,14 +123,20 @@ export async function postProcessAvatarVideo(
   const musicAssetPath = path.join(assetsDir, "music.mp3");
   const musicPath = options.musicPath ?? (existsSync(musicAssetPath) ? musicAssetPath : null);
 
-  // --- Background color for padding ---
-  const bgHex = hexToFFmpeg(
-    (options.backgroundColor ?? "#000000FF").replace(/FF$/, "").replace(/^#/, "#").slice(0, 7)
-  );
+  // --- Background color for padding (format: #RRGGBBAA — take first 6 hex chars = RRGGBB) ---
+  const bgHex = hexToFFmpeg((options.backgroundColor ?? "#000000FF").slice(0, 7));
   const brandHex = hexToFFmpeg(options.primaryColor ?? "#7C3AED");
 
+  // --- Generate ASS file for CTA text (drawtext not available in this ffmpeg build) ---
+  let assPath: string | null = null;
+  if (options.cta) {
+    assPath = path.join(outputsDir, "cta.ass");
+    await generateAssFile(options.cta, assPath, duration, outW, outH);
+    logger.info({ assPath }, "CTA ASS subtitle file generated");
+  }
+
   logger.info(
-    { platform: options.platform, isVertical, outW, outH, logoPath, musicPath, bgHex, brandHex, duration },
+    { platform: options.platform, isVertical, outW, outH, logoPath, assPath, musicPath, bgHex, brandHex, duration },
     "Post-processing avatar video"
   );
 
@@ -156,14 +198,11 @@ export async function postProcessAvatarVideo(
       lastV = "with_logo";
     }
 
-    // 4. CTA text at bottom-center (above brand bar)
-    const ctaText = options.cta;
-    if (ctaText) {
-      const escapedCta = ctaText.replace(/'/g, "\\'").replace(/:/g, "\\:");
-      const fontSize = isVertical ? 38 : 32;
-      const yPos = isVertical ? `h-${100}` : `h-${80}`;
+    // 4. CTA text using ASS subtitle (drawtext not available in this ffmpeg build)
+    if (assPath) {
+      const escapedAssPath = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
       filterParts.push(
-        `[${lastV}]drawtext=text='${escapedCta}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${yPos}:box=1:boxcolor=black@0.45:boxborderw=8[with_cta]`
+        `[${lastV}]subtitles='${escapedAssPath}'[with_cta]`
       );
       lastV = "with_cta";
     }
