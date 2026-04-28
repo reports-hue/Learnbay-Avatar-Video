@@ -41,10 +41,18 @@ async function downloadUrl(url: string, dest: string): Promise<void> {
   });
 }
 
-function hexToFFmpeg(hex: string): string {
-  const clean = hex.replace("#", "").slice(0, 6);
+function toFFmpegHex(hex: string): string {
+  const clean = hex.replace(/^#/, "").slice(0, 6);
   if (/^[0-9a-fA-F]{6}$/.test(clean)) return `0x${clean}`;
   return "0x7C3AED";
+}
+
+function hexToAssAlpha(hex: string): string {
+  const clean = hex.replace(/^#/, "").slice(0, 6).toLowerCase();
+  const r = clean.slice(0, 2);
+  const g = clean.slice(2, 4);
+  const b = clean.slice(4, 6);
+  return `&H00${b}${g}${r}`.toUpperCase();
 }
 
 async function generateAssFile(
@@ -52,11 +60,14 @@ async function generateAssFile(
   outputPath: string,
   durationSec: number,
   w: number,
-  h: number
+  h: number,
+  accentColor: string
 ): Promise<void> {
   const endTime = formatAssTime(durationSec);
-  const fontSize = h >= 1080 ? 52 : 38;
-  const marginV = h >= 1080 ? 60 : 40;
+  const fontSize = h >= 1080 ? 54 : 40;
+  const lowerThirdH = Math.round(h * 0.22);
+  const marginV = Math.round(lowerThirdH * 0.38);
+  const accentAss = hexToAssAlpha(accentColor);
   const content = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${w}
@@ -65,7 +76,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: CTA,Arial,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2.5,0,2,20,20,${marginV},1
+Style: CTA,Arial,${fontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2.5,0,2,30,30,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -87,6 +98,7 @@ export interface PostProcessOptions {
   logoUrl?: string;
   primaryColor?: string;
   backgroundColor?: string;
+  gradientColor2?: string;
   cta?: string;
   musicPath?: string;
 }
@@ -102,6 +114,15 @@ export async function postProcessAvatarVideo(
   const outW = isVertical ? 1080 : 1920;
   const outH = isVertical ? 1920 : 1080;
 
+  const lowerH = Math.round(outH * 0.22);
+  const barH = isVertical ? 5 : 4;
+
+  const bgHex = toFFmpegHex((options.backgroundColor ?? "#000000FF").slice(0, 7));
+  const bg2Hex = options.gradientColor2 ? toFFmpegHex(options.gradientColor2) : null;
+  const accentHex = toFFmpegHex(options.primaryColor ?? "#4A9FFF");
+  const accentColor = options.primaryColor ?? "#4A9FFF";
+  const useGradient = bg2Hex !== null;
+
   // --- Resolve logo ---
   let logoPath: string | null = null;
   if (options.logoUrl) {
@@ -109,9 +130,9 @@ export async function postProcessAvatarVideo(
       const dlPath = path.join(outputsDir, "logo_dl.png");
       await downloadUrl(options.logoUrl, dlPath);
       logoPath = dlPath;
-      logger.info({ logoPath }, "Logo downloaded from URL");
+      logger.info({ logoPath }, "Logo downloaded");
     } catch (e) {
-      logger.warn({ err: e }, "Failed to download logo URL, skipping");
+      logger.warn({ err: e }, "Failed to download logo, skipping");
     }
   }
   if (!logoPath) {
@@ -123,20 +144,16 @@ export async function postProcessAvatarVideo(
   const musicAssetPath = path.join(assetsDir, "music.mp3");
   const musicPath = options.musicPath ?? (existsSync(musicAssetPath) ? musicAssetPath : null);
 
-  // --- Background color for padding (format: #RRGGBBAA — take first 6 hex chars = RRGGBB) ---
-  const bgHex = hexToFFmpeg((options.backgroundColor ?? "#000000FF").slice(0, 7));
-  const brandHex = hexToFFmpeg(options.primaryColor ?? "#7C3AED");
-
-  // --- Generate ASS file for CTA text (drawtext not available in this ffmpeg build) ---
+  // --- CTA ASS subtitle file ---
   let assPath: string | null = null;
   if (options.cta) {
     assPath = path.join(outputsDir, "cta.ass");
-    await generateAssFile(options.cta, assPath, duration, outW, outH);
-    logger.info({ assPath }, "CTA ASS subtitle file generated");
+    await generateAssFile(options.cta, assPath, duration, outW, outH, accentColor);
+    logger.info({ assPath }, "CTA ASS file generated");
   }
 
   logger.info(
-    { platform: options.platform, isVertical, outW, outH, logoPath, assPath, musicPath, bgHex, brandHex, duration },
+    { platform: options.platform, isVertical, outW, outH, useGradient, bgHex, bg2Hex, accentHex, duration },
     "Post-processing avatar video"
   );
 
@@ -159,70 +176,98 @@ export async function postProcessAvatarVideo(
       musicIdx = inputIndex++;
     }
 
-    const filterParts: string[] = [];
+    const fp: string[] = [];
 
-    // 1. Scale + pad avatar to target dimensions
-    if (isVertical) {
-      // Scale avatar to full width (1080), pad height to 1920 with background color
-      // Avatar sits at vertical center-bottom (y = 60% from top)
-      filterParts.push(
-        `[${avatarIdx}:v]scale=${outW}:-2[av_scaled]`,
-        `[av_scaled]pad=${outW}:${outH}:(ow-iw)/2:(oh-ih)*3/5:color=${bgHex}[av_framed]`
-      );
+    // 1. Background: gradient (when AI theme) or flat color
+    if (useGradient) {
+      if (isVertical) {
+        // Gradient top-to-bottom
+        fp.push(
+          `gradients=s=${outW}x${outH}:type=linear:x0=${outW / 2}:y0=0:x1=${outW / 2}:y1=${outH}:c0=${bgHex}:c1=${bg2Hex}:duration=${Math.ceil(duration) + 2}:rate=30[grad_bg]`
+        );
+      } else {
+        // Gradient diagonal (top-left to bottom-right) for landscape
+        fp.push(
+          `gradients=s=${outW}x${outH}:type=linear:x0=0:y0=0:x1=${outW}:y1=${outH}:c0=${bgHex}:c1=${bg2Hex}:duration=${Math.ceil(duration) + 2}:rate=30[grad_bg]`
+        );
+      }
+      // Scale avatar (without pad) and overlay on gradient
+      if (isVertical) {
+        fp.push(`[${avatarIdx}:v]scale=${outW}:-2[av_s]`);
+        fp.push(`[grad_bg][av_s]overlay=(W-w)/2:(H-h)*3/5[av_framed]`);
+      } else {
+        fp.push(`[${avatarIdx}:v]scale=${outW}:${outH}:force_original_aspect_ratio=decrease[av_s]`);
+        fp.push(`[grad_bg][av_s]overlay=(W-w)/2:(H-h)/2[av_framed]`);
+      }
     } else {
-      // Scale to 1920x1080, pad if needed
-      filterParts.push(
-        `[${avatarIdx}:v]scale=${outW}:${outH}:force_original_aspect_ratio=decrease,pad=${outW}:${outH}:(ow-iw)/2:(oh-ih)/2:color=${bgHex}[av_framed]`
-      );
+      // Flat color pad (original behavior)
+      if (isVertical) {
+        fp.push(
+          `[${avatarIdx}:v]scale=${outW}:-2[av_s]`,
+          `[av_s]pad=${outW}:${outH}:(ow-iw)/2:(oh-ih)*3/5:color=${bgHex}[av_framed]`
+        );
+      } else {
+        fp.push(
+          `[${avatarIdx}:v]scale=${outW}:${outH}:force_original_aspect_ratio=decrease,pad=${outW}:${outH}:(ow-iw)/2:(oh-ih)/2:color=${bgHex}[av_framed]`
+        );
+      }
     }
 
     let lastV = "av_framed";
 
-    // 2. Brand accent bar at the bottom
-    if (options.primaryColor) {
-      const barH = isVertical ? 12 : 8;
-      filterParts.push(
-        `[${lastV}]drawbox=x=0:y=ih-${barH}:w=iw:h=${barH}:c=${brandHex}:t=fill[with_bar]`
-      );
-      lastV = "with_bar";
-    }
+    // 2. Professional lower-third: two-layer semi-transparent overlay for depth
+    const lt = lowerH;
+    // Primary dark overlay covering full lower-third
+    fp.push(
+      `[${lastV}]drawbox=x=0:y=ih-${lt}:w=iw:h=${lt}:c=black@0.52:t=fill[with_lt1]`
+    );
+    // Extra darkening on bottom half of lower-third (gradient illusion)
+    const lt2 = Math.round(lt * 0.55);
+    fp.push(
+      `[with_lt1]drawbox=x=0:y=ih-${lt2}:w=iw:h=${lt2}:c=black@0.22:t=fill[with_lt]`
+    );
+    lastV = "with_lt";
 
-    // 3. Logo overlay — top-right corner
+    // 3. Accent line above lower-third
+    fp.push(
+      `[${lastV}]drawbox=x=0:y=ih-${lt + barH}:w=iw:h=${barH}:c=${accentHex}:t=fill[with_bar]`
+    );
+    lastV = "with_bar";
+
+    // 4. Logo overlay — top-right corner with a subtle dark backing circle
     if (logoIdx >= 0) {
-      const logoW = Math.round(outW * 0.13);
-      const pad = 18;
-      filterParts.push(
+      const logoW = isVertical ? Math.round(outW * 0.18) : Math.round(outW * 0.10);
+      const pad = isVertical ? 22 : 16;
+      fp.push(
         `[${logoIdx}:v]scale=${logoW}:-1[logo_s]`,
         `[${lastV}][logo_s]overlay=W-w-${pad}:${pad}[with_logo]`
       );
       lastV = "with_logo";
     }
 
-    // 4. CTA text using ASS subtitle (drawtext not available in this ffmpeg build)
+    // 5. CTA text via ASS subtitle in the lower-third area
     if (assPath) {
-      const escapedAssPath = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
-      filterParts.push(
-        `[${lastV}]subtitles='${escapedAssPath}'[with_cta]`
-      );
+      const escaped = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+      fp.push(`[${lastV}]subtitles='${escaped}'[with_cta]`);
       lastV = "with_cta";
     }
 
-    // 5. FPS normalize
-    filterParts.push(`[${lastV}]fps=30[vout]`);
+    // 6. FPS normalize
+    fp.push(`[${lastV}]fps=30[vout]`);
 
-    // 6. Audio chain
-    const audioFilters: string[] = [];
+    // 7. Audio chain
+    const af: string[] = [];
     if (musicIdx >= 0) {
-      audioFilters.push(
+      af.push(
         `[${avatarIdx}:a]aformat=fltp:44100:stereo,volume=1.0[speech]`,
-        `[${musicIdx}:a]aformat=fltp:44100:stereo,volume=0.08[bg_music]`,
+        `[${musicIdx}:a]aformat=fltp:44100:stereo,volume=0.07[bg_music]`,
         `[speech][bg_music]amix=inputs=2:duration=first[aout]`
       );
     } else {
-      audioFilters.push(`[${avatarIdx}:a]aformat=fltp:44100:stereo[aout]`);
+      af.push(`[${avatarIdx}:a]aformat=fltp:44100:stereo[aout]`);
     }
 
-    const fullFilter = [...filterParts, ...audioFilters].join(";");
+    const fullFilter = [...fp, ...af].join(";");
     logger.info({ fullFilter }, "FFmpeg filter graph");
 
     const outputOptions = [
@@ -231,7 +276,7 @@ export async function postProcessAvatarVideo(
       `-t ${duration}`,
       "-c:v libx264",
       "-preset fast",
-      "-crf 22",
+      "-crf 20",
       "-c:a aac",
       "-b:a 128k",
       "-movflags +faststart",

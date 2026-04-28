@@ -2,7 +2,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
-import { generateScript } from "../services/openai.js";
+import { generateScript, generateBrandTheme } from "../services/openai.js";
 import { generateAvatarVideo, type AvatarJobConfig } from "../services/avatarService.js";
 import { postProcessAvatarVideo } from "../services/ffmpegService.js";
 
@@ -21,6 +21,7 @@ export interface GenerateRequest {
   logoUrl?: string;
   primaryColor?: string;
   cta?: string;
+  autoBackground?: boolean;
 }
 
 router.post("/generate", async (req: Request, res: Response) => {
@@ -30,11 +31,12 @@ router.post("/generate", async (req: Request, res: Response) => {
     avatar = "lisa",
     avatarStyle = "graceful-sitting",
     voice = "en-US-AvaMultilingualNeural",
-    backgroundColor = "#FFFFFFFF",
+    backgroundColor,
     bgImageUrl,
     logoUrl,
-    primaryColor = "#7C3AED",
+    primaryColor,
     cta,
+    autoBackground = false,
   } = req.body as GenerateRequest;
 
   if (!topic || !platform) {
@@ -42,11 +44,26 @@ router.post("/generate", async (req: Request, res: Response) => {
     return;
   }
 
-  req.log.info({ topic, platform, avatar, avatarStyle, voice }, "Starting avatar video generation");
+  req.log.info({ topic, platform, avatar, avatarStyle, voice, autoBackground }, "Starting avatar video generation");
 
   try {
     req.log.info("Step 1: Generating script");
     const script = await generateScript(topic, platform);
+
+    req.log.info("Step 1b: Resolving brand theme");
+    let resolvedBgColor1 = (backgroundColor ?? "#000000FF").slice(0, 7);
+    let resolvedBgColor2: string | undefined;
+    let resolvedAccent = primaryColor ?? "#7C3AED";
+
+    if (autoBackground || !backgroundColor) {
+      const theme = await generateBrandTheme(topic, platform);
+      resolvedBgColor1 = theme.bgColor1;
+      resolvedBgColor2 = theme.bgColor2;
+      resolvedAccent = primaryColor ?? theme.accentColor;
+      req.log.info({ theme, resolvedAccent }, "Auto brand theme applied");
+    }
+
+    const azureBgColor = resolvedBgColor1 + "FF";
 
     req.log.info("Step 2: Generating avatar video via Azure");
     const avatarConfig: AvatarJobConfig = {
@@ -54,7 +71,7 @@ router.post("/generate", async (req: Request, res: Response) => {
       character: avatar,
       style: avatarStyle,
       voice,
-      backgroundColor,
+      backgroundColor: bgImageUrl ? "#000000FF" : azureBgColor,
       bgImageUrl: bgImageUrl || undefined,
     };
     const avatarVideoPath = await generateAvatarVideo(avatarConfig);
@@ -63,8 +80,9 @@ router.post("/generate", async (req: Request, res: Response) => {
     await postProcessAvatarVideo(avatarVideoPath, {
       platform,
       logoUrl: logoUrl || undefined,
-      primaryColor,
-      backgroundColor,
+      primaryColor: resolvedAccent,
+      backgroundColor: azureBgColor,
+      gradientColor2: resolvedBgColor2,
       cta: cta || undefined,
     });
 
@@ -72,6 +90,11 @@ router.post("/generate", async (req: Request, res: Response) => {
       success: true,
       script,
       videoUrl: "/api/video/final.mp4",
+      brandTheme: {
+        bgColor1: resolvedBgColor1,
+        bgColor2: resolvedBgColor2 ?? resolvedBgColor1,
+        accentColor: resolvedAccent,
+      },
     });
   } catch (err) {
     req.log.error({ err }, "Video generation failed");
