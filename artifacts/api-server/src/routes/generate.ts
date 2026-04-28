@@ -4,9 +4,11 @@ import { fileURLToPath } from "url";
 import { existsSync, readdirSync, statSync } from "fs";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
+import { logger } from "../lib/logger.js";
 import { generateScript, generateBrandTheme, researchCompanyForScript, type ScriptStyle } from "../services/openai.js";
 import { generateAvatarVideo, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
 import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle } from "../services/ffmpegService.js";
+import { generateBackgroundImage } from "../services/imageGenerationService.js";
 import { getWordTimings } from "../services/speech.js";
 import { synthesizeElevenLabs } from "../services/elevenLabsService.js";
 
@@ -126,6 +128,8 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     // Run company research (if brand profile present) and theme generation in parallel
     const needsResearch = companyName.trim().length > 0;
     const needsTheme = autoBackground || !backgroundColor;
+    const hasImageDeployment = !!(process.env.AZURE_IMAGE_DEPLOYMENT || process.env.AZURE_OPENAI_ENDPOINT);
+    const needsAiBg = autoBackground && hasImageDeployment && !bgImageUrl;
 
     const [companyContext, brandThemeResult] = await Promise.all([
       needsResearch
@@ -146,6 +150,25 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       resolvedBgColor1 = brandThemeResult.bgColor1;
       resolvedBgColor2 = brandThemeResult.bgColor2;
       resolvedAccent = primaryColor ?? brandThemeResult.accentColor;
+    }
+
+    // ── AI background image generation (gpt-image-1) ──
+    let aiBgImagePath: string | undefined;
+    if (needsAiBg) {
+      updateJob(jobId, { step: "ai_background", percent: 16, message: "Generating AI background image…" });
+      try {
+        aiBgImagePath = await generateBackgroundImage(
+          topic,
+          brandThemeResult?.backgroundStyle ?? "cinematic_dark",
+          resolvedBgColor1,
+          resolvedBgColor2 ?? resolvedBgColor1,
+          platform,
+          `bg_${videoId}.png`
+        );
+        logger.info({ aiBgImagePath }, "AI background image ready");
+      } catch (err) {
+        logger.warn({ err }, "AI background generation failed — falling back to gradient");
+      }
     }
 
     updateJob(jobId, { step: "script_done", percent: 18, message: "Script ready. Getting word timings…", script });
@@ -206,6 +229,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       backgroundColor: azureBgColor,
       gradientColor2: resolvedBgColor2,
       backgroundStyle: brandThemeResult?.backgroundStyle,
+      bgImagePath: aiBgImagePath,
       cta: cta || undefined,
       wordTimings: wordTimings.length > 0 ? wordTimings : undefined,
       captionStyle,

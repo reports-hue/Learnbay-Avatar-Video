@@ -887,7 +887,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                 )}
                 {scenePreset === "auto" && (
                   <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
-                    <Sparkles className="w-3 h-3 text-primary" /> AI picks gradient colors for your topic
+                    <Sparkles className="w-3 h-3 text-primary" /> AI generates a cinematic background image tuned to your topic
                   </p>
                 )}
               </div>

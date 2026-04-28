@@ -270,6 +270,7 @@ export interface PostProcessOptions {
   backgroundColor?: string;
   gradientColor2?: string;
   backgroundStyle?: "cinematic_dark" | "tech_gradient" | "warm_studio" | "creative_pop" | "corporate_sleek";
+  bgImagePath?: string;     // local path to AI-generated or user-supplied background image
   cta?: string;
   musicPath?: string;
   wordTimings?: WordTiming[];
@@ -352,7 +353,9 @@ export async function postProcessAvatarVideo(
     await generateHookAssFile(options.script, hookAssPath, outW, outH, accentColor);
   }
 
-  logger.info({ platform: options.platform, isVertical, outW, outH, useGreenScreen, useGradient, realism, captionStyle, duration }, "Post-processing avatar video");
+  const bgImagePath = options.bgImagePath && existsSync(options.bgImagePath) ? options.bgImagePath : null;
+
+  logger.info({ platform: options.platform, isVertical, outW, outH, useGreenScreen, useGradient, hasBgImage: !!bgImagePath, realism, captionStyle, duration }, "Post-processing avatar video");
 
   return new Promise((resolve, reject) => {
     let cmd = ffmpeg();
@@ -360,6 +363,12 @@ export async function postProcessAvatarVideo(
 
     cmd = cmd.input(avatarVideoPath);
     const avatarIdx = inputIndex++;
+
+    let bgImgIdx = -1;
+    if (bgImagePath) {
+      cmd = cmd.input(bgImagePath);
+      bgImgIdx = inputIndex++;
+    }
 
     let logoIdx = -1;
     if (logoPath) {
@@ -375,17 +384,13 @@ export async function postProcessAvatarVideo(
 
     const fp: string[] = [];
 
-    // ── 1. Background source — rich cinematic gradient ──
-    // Always use a gradient for visual depth; fallback to solid if no bg2
-    if (useGradient) {
-      if (isVertical) {
-        // Portrait: diagonal gradient (top-left to bottom-right) for dynamic feel
-        fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=30[bg_raw]`);
-      } else {
-        fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=30[bg_raw]`);
-      }
+    // ── 1. Background source ──
+    if (bgImgIdx >= 0) {
+      // AI-generated or user-supplied background image: scale to oversized, loop for duration
+      fp.push(`[${bgImgIdx}:v]scale=${outW103}:${outH103}:force_original_aspect_ratio=increase,crop=${outW103}:${outH103},loop=loop=-1:size=1:start=0,setpts=PTS-STARTPTS,fps=30,trim=duration=${bgDur}[bg_raw]`);
+    } else if (useGradient) {
+      fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=30[bg_raw]`);
     } else {
-      // Solid with a subtle tonal shift for depth
       fp.push(`color=c=${bgHex}:s=${outW103}x${outH103}:r=30:d=${bgDur}[bg_raw]`);
     }
 
