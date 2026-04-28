@@ -35,6 +35,7 @@ interface ElVoice {
 }
 const EL_KEY_LS = "el_api_key";
 const getElKey = () => localStorage.getItem(EL_KEY_LS) ?? "";
+const PENDING_JOB_KEY = "pending_video_job_id";
 interface BrandTheme { bgColor1: string; bgColor2: string; accentColor: string }
 interface GenerationResult {
   videoId: string; videoUrl: string; thumbnailUrl?: string;
@@ -418,7 +419,8 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   const [liveScript, setLiveScript] = useState<string | null>(null);
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const [resumedJob, setResumedJob] = useState(false);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const voiceStyleOptions = VOICE_STYLES[voice] ?? [];
 
@@ -446,6 +448,91 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       audioRef.current = null;
     }
   }
+
+  function stopPolling() {
+    if (pollIntervalRef.current !== null) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }
+
+  function startPolling(jobId: string) {
+    stopPolling();
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const resp = await fetch(`/api/jobs/${jobId}`);
+        if (!resp.ok) {
+          if (resp.status === 404) {
+            stopPolling();
+            setGenError("Job not found. It may have expired — please try again.");
+            setIsGenerating(false);
+            localStorage.removeItem(PENDING_JOB_KEY);
+          }
+          return;
+        }
+        const job = await resp.json() as {
+          status: string; step: string; percent: number; message: string;
+          script?: string; error?: string;
+          result?: { videoId: string; videoUrl: string; thumbnailUrl: string | null; script: string; brandTheme: BrandTheme };
+        };
+
+        setProgress({ step: job.step, percent: job.percent, message: job.message });
+        if (job.script) setLiveScript(job.script);
+
+        if (job.status === "done" && job.result) {
+          stopPolling();
+          localStorage.removeItem(PENDING_JOB_KEY);
+          const r: GenerationResult = {
+            videoId: job.result.videoId,
+            videoUrl: job.result.videoUrl + "?t=" + Date.now(),
+            thumbnailUrl: job.result.thumbnailUrl ? job.result.thumbnailUrl + "?t=" + Date.now() : undefined,
+            script: job.result.script,
+            brandTheme: job.result.brandTheme,
+          };
+          setResult(r);
+          setLiveScript(r.script);
+          setProgress({ step: "done", percent: 100, message: "Your video is ready!" });
+          setIsGenerating(false);
+          addVideo({
+            id: r.videoId,
+            topic: topic.trim() || "Video",
+            platform,
+            scriptStyle,
+            captionStyle,
+            voice,
+            avatar,
+            videoUrl: job.result.videoUrl,
+            thumbnailUrl: job.result.thumbnailUrl ?? undefined,
+            script: r.script,
+            brandTheme: r.brandTheme,
+            createdAt: new Date().toISOString(),
+          });
+        } else if (job.status === "failed") {
+          stopPolling();
+          localStorage.removeItem(PENDING_JOB_KEY);
+          setGenError(job.error ?? "Generation failed");
+          setProgress(null);
+          setIsGenerating(false);
+        }
+      } catch {
+        // network blip — keep polling
+      }
+    }, 2500);
+  }
+
+  // On mount: resume polling if a job was in-progress when page closed
+  useEffect(() => {
+    const pendingId = localStorage.getItem(PENDING_JOB_KEY);
+    if (pendingId) {
+      setIsGenerating(true);
+      setResumedJob(true);
+      setStep(4);
+      setProgress({ step: "start", percent: 0, message: "Reconnecting to your video job…" });
+      startPolling(pendingId);
+    }
+    return () => stopPolling();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function fetchAllVoices() {
     if (allVoices) { setShowVoiceBrowser(true); return; }
@@ -597,10 +684,9 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
     setGenError(null);
     setResult(null);
     setLiveScript(null);
+    setResumedJob(false);
     setProgress({ step: "start", percent: 0, message: "Starting…" });
 
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
     const payload = buildPayload();
     const cleanPayload = Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined));
 
@@ -609,83 +695,34 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cleanPayload),
-        signal: ctrl.signal,
       });
 
-      if (!resp.body) throw new Error("No response stream");
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      let curEvent = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            curEvent = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6)) as Record<string, unknown>;
-              if (curEvent === "progress") {
-                setProgress(data as unknown as ProgressState);
-                if (data.script) setLiveScript(data.script as string);
-              } else if (curEvent === "done") {
-                const r: GenerationResult = {
-                  videoId: data.videoId as string,
-                  videoUrl: (data.videoUrl as string) + "?t=" + Date.now(),
-                  thumbnailUrl: data.thumbnailUrl ? (data.thumbnailUrl as string) + "?t=" + Date.now() : undefined,
-                  script: data.script as string,
-                  brandTheme: data.brandTheme as BrandTheme,
-                };
-                setResult(r);
-                setLiveScript(r.script);
-                setProgress({ step: "done", percent: 100, message: "Video ready!" });
-                addVideo({
-                  id: r.videoId,
-                  topic: topic.trim(),
-                  platform,
-                  scriptStyle,
-                  captionStyle,
-                  voice,
-                  avatar,
-                  videoUrl: data.videoUrl as string,
-                  thumbnailUrl: data.thumbnailUrl as string | undefined,
-                  script: r.script,
-                  brandTheme: r.brandTheme,
-                  createdAt: new Date().toISOString(),
-                });
-              } else if (curEvent === "error") {
-                throw new Error((data.message as string) ?? "Generation failed");
-              }
-              curEvent = "";
-            } catch (parseErr) {
-              if (parseErr instanceof SyntaxError) continue;
-              throw parseErr;
-            }
-          }
-        }
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: "Unknown error" })) as { error?: string };
+        throw new Error(err.error ?? `HTTP ${resp.status}`);
       }
+
+      const { jobId } = await resp.json() as { jobId: string };
+      localStorage.setItem(PENDING_JOB_KEY, jobId);
+      startPolling(jobId);
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return;
       setGenError(err instanceof Error ? err.message : String(err));
       setProgress(null);
-    } finally {
       setIsGenerating(false);
     }
   }
 
   function resetForm() {
+    stopPolling();
+    localStorage.removeItem(PENDING_JOB_KEY);
     setStep(1);
     setTopic("");
     setResult(null);
     setProgress(null);
     setLiveScript(null);
     setGenError(null);
+    setIsGenerating(false);
+    setResumedJob(false);
     stopPreview();
   }
 
@@ -918,21 +955,23 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
               <span>·</span>
               <span>{AVATARS[avatar]?.desc}</span>
               <span>·</span>
-              <span>{AVATARS[avatar]?.styles.length} styles</span>
+              <span>{AVATARS[avatar]?.styles.filter(s => s !== "").length || "default"} {AVATARS[avatar]?.styles.filter(s => s !== "").length ? "styles" : "style"}</span>
             </div>
           </div>
 
           {/* ── Avatar Style ── */}
-          <div>
-            <SLabel>Avatar Style</SLabel>
-            <div className="flex flex-wrap gap-2">
-              {AVATARS[avatar]?.styles.map((s) => (
-                <Pill key={s} active={avatarStyle === s} onClick={() => setAvatarStyle(s)}>
-                  {s.replace(/-/g, " ")}
-                </Pill>
-              ))}
+          {AVATARS[avatar]?.styles.some((s) => s !== "") && (
+            <div>
+              <SLabel>Avatar Style</SLabel>
+              <div className="flex flex-wrap gap-2">
+                {AVATARS[avatar]?.styles.filter((s) => s !== "").map((s) => (
+                  <Pill key={s} active={avatarStyle === s} onClick={() => setAvatarStyle(s)}>
+                    {s.replace(/-/g, " ")}
+                  </Pill>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* ── Custom Photo Badge ── */}
           <div>
@@ -1197,7 +1236,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   { label: "Topic", value: topic },
                   { label: "Platform", value: platform },
                   { label: "Style", value: SCRIPT_STYLES.find((s) => s.value === scriptStyle)?.label ?? scriptStyle },
-                  { label: "Avatar", value: `${AVATARS[avatar]?.label ?? avatar} · ${avatarStyle.replace(/-/g, " ")}` },
+                  { label: "Avatar", value: avatarStyle ? `${AVATARS[avatar]?.label ?? avatar} · ${avatarStyle.replace(/-/g, " ")}` : (AVATARS[avatar]?.label ?? avatar) },
                   { label: "Voice", value: voice.startsWith("el:") ? (elVoices?.find(v => v.voice_id === voice.slice(3))?.name ?? "ElevenLabs voice") + " (ElevenLabs)" : (QUICK_VOICES.find((v) => v.value === voice)?.label ?? voice.split("-").slice(2).join("-").replace(/Neural$/, "")) },
                   { label: "Captions", value: CAPTION_STYLES.find((c) => c.value === captionStyle)?.label ?? captionStyle },
                   { label: "Brand", value: brandMode === "saved" ? brand.companyName : `Custom · ${selectedPreset?.label ?? scenePreset}` },
@@ -1228,6 +1267,12 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
           {/* Progress */}
           {isGenerating && progress && (
             <div className="bg-white border border-border rounded-xl p-5 space-y-4">
+              {resumedJob && (
+                <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                  <span>Your video job is still running — reconnected automatically.</span>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>{progress.message}</span>
@@ -1238,17 +1283,18 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
 
               <div className="grid grid-cols-4 gap-1.5 text-[10px]">
                 {[
-                  { key: "script_done", label: "Script" },
-                  { key: "avatar_start", label: "Avatar" },
-                  { key: "avatar_done", label: "Effects" },
-                  { key: "done", label: "Done" },
-                ].map(({ key, label }, idx) => {
-                  const phases = ["script_done", "avatar_start", "avatar_done", "done"];
-                  const curIdx = phases.indexOf(progress.step);
-                  const isComplete = curIdx > idx;
-                  const isActive = phases[idx] === progress.step || (progress.step === "script" && idx === 0);
+                  { keys: ["script", "script_done", "elevenlabs"], label: "Script" },
+                  { keys: ["avatar_start"], label: "Avatar" },
+                  { keys: ["avatar_done", "thumbnail"], label: "Effects" },
+                  { keys: ["done"], label: "Done" },
+                ].map(({ keys, label }, idx) => {
+                  const allPhases = ["script", "script_done", "elevenlabs", "avatar_start", "avatar_done", "thumbnail", "done"];
+                  const milestones = [0, 3, 4, 6]; // index in allPhases each pill "owns"
+                  const curIdx = allPhases.indexOf(progress.step);
+                  const isActive = keys.includes(progress.step);
+                  const isComplete = curIdx >= 0 && curIdx > (milestones[idx] ?? 99);
                   return (
-                    <div key={key} className={cn(
+                    <div key={label} className={cn(
                       "text-center font-semibold py-1.5 rounded-lg border transition-all",
                       isComplete ? "border-emerald-300 text-emerald-700 bg-emerald-50" :
                       isActive   ? "border-primary text-primary bg-violet-50" :

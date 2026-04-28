@@ -54,7 +54,7 @@ export const AVATARS: Record<string, AvatarCharacter> = {
     desc: "Corporate professional",
     gradient: ["#831843", "#BE185D"],
     textColor: "#fff",
-    styles: ["graceful-sitting", "casual-sitting", "technical-sitting"],
+    styles: [""],
   },
   max: {
     label: "Max",
@@ -62,7 +62,7 @@ export const AVATARS: Record<string, AvatarCharacter> = {
     desc: "Tech expert",
     gradient: ["#1C1917", "#292524"],
     textColor: "#fff",
-    styles: ["formal"],
+    styles: [""],
   },
 };
 

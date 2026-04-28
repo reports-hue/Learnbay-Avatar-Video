@@ -123,7 +123,7 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
   const avatarConfig: Record<string, unknown> = {
     customized: false,
     talkingAvatarCharacter: config.character || "lisa",
-    talkingAvatarStyle: config.style || "graceful-sitting",
+    ...(config.style ? { talkingAvatarStyle: config.style } : {}),
     videoFormat: "mp4",
     videoCodec: "h264",
     backgroundColor: config.bgImageUrl ? "#000000FF" : effectiveBgColor,

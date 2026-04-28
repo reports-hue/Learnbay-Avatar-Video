@@ -20,6 +20,42 @@ const PACING_SSML_RATE: Record<PacingRate, string> = {
   fast: "1.05",
 };
 
+// ─── Job store ─────────────────────────────────────────────────────
+export interface JobResult {
+  videoId: string;
+  videoUrl: string;
+  thumbnailUrl: string | null;
+  script: string;
+  brandTheme: { bgColor1: string; bgColor2: string; accentColor: string };
+}
+
+export interface JobState {
+  status: "pending" | "running" | "done" | "failed";
+  step: string;
+  percent: number;
+  message: string;
+  script?: string;
+  result?: JobResult;
+  error?: string;
+  createdAt: number;
+}
+
+const jobs = new Map<string, JobState>();
+
+// Clean up jobs older than 4 hours
+setInterval(() => {
+  const cutoff = Date.now() - 4 * 60 * 60 * 1000;
+  for (const [id, job] of jobs) {
+    if (job.createdAt < cutoff) jobs.delete(id);
+  }
+}, 30 * 60 * 1000);
+
+function updateJob(jobId: string, patch: Partial<JobState>) {
+  const existing = jobs.get(jobId);
+  if (existing) jobs.set(jobId, { ...existing, ...patch });
+}
+
+// ─── Generate request type ────────────────────────────────────────
 export interface GenerateRequest {
   topic?: string;
   platform?: string;
@@ -39,15 +75,14 @@ export interface GenerateRequest {
   realism?: boolean;
   pacing?: PacingRate;
   customPhotoUrl?: string;
-  // ElevenLabs: pass API key from client when voice starts with "el:"
   elevenLabsKey?: string;
 }
 
-// ─── Video generation (SSE) ─────────────────────────────────────
-router.post("/generate", async (req: Request, res: Response) => {
+// ─── Async generation job ─────────────────────────────────────────
+async function runGenerationJob(jobId: string, body: GenerateRequest) {
   const {
-    topic,
-    platform,
+    topic = "",
+    platform = "",
     avatar = "lisa",
     avatarStyle = "graceful-sitting",
     voice = "en-US-AvaMultilingualNeural",
@@ -64,42 +99,22 @@ router.post("/generate", async (req: Request, res: Response) => {
     realism = true,
     pacing = "natural",
     elevenLabsKey,
-  } = req.body as GenerateRequest;
+  } = body;
 
-  // Detect ElevenLabs voice (prefixed with "el:")
   const isElevenLabs = typeof voice === "string" && voice.startsWith("el:");
   const elVoiceId = isElevenLabs ? voice.slice(3) : null;
   const elApiKey = elevenLabsKey || process.env.ELEVENLABS_API_KEY || "";
 
-  if (!topic || !platform) {
-    res.status(400).json({ error: "topic and platform are required" });
-    return;
-  }
-
-  // ── Setup SSE ──
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders();
-
-  function send(event: string, data: object) {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    if (typeof (res as unknown as { flush?: () => void }).flush === "function") {
-      (res as unknown as { flush: () => void }).flush();
-    }
-  }
-
   const videoId = uuidv4().replace(/-/g, "").slice(0, 12);
-  req.log.info({ topic, platform, avatar, voice, scriptStyle, captionStyle, realism, pacing, videoId }, "Starting video generation");
 
   try {
-    // ── Step 1: Script + brand theme (parallel) ──
-    send("progress", { step: "script", percent: 5, message: "Crafting your AI script…" });
+    updateJob(jobId, { status: "running", step: "script", percent: 5, message: "Crafting your AI script…" });
 
     const [script, brandThemeResult] = await Promise.all([
       generateScript(topic, platform, scriptStyle as ScriptStyle),
-      (autoBackground || !backgroundColor) ? generateBrandTheme(topic, platform) : Promise.resolve(null),
+      (autoBackground || !backgroundColor)
+        ? generateBrandTheme(topic, platform)
+        : Promise.resolve(null),
     ]);
 
     let resolvedBgColor1 = (backgroundColor ?? "#000000FF").slice(0, 7);
@@ -112,43 +127,36 @@ router.post("/generate", async (req: Request, res: Response) => {
       resolvedAccent = primaryColor ?? brandThemeResult.accentColor;
     }
 
-    send("progress", { step: "script_done", percent: 18, message: "Script ready. Getting word timings…", script });
+    updateJob(jobId, { step: "script_done", percent: 18, message: "Script ready. Getting word timings…", script });
 
-    // ── Step 2: Word timings (for captions) ──
+    // ── Step 2: Word timings / ElevenLabs TTS ──
     const pacingRate = PACING_SSML_RATE[pacing] ?? "0.95";
     let wordTimings: import("../services/speech.js").WordTiming[] = [];
-
-    // ElevenLabs audio synthesis — runs before avatar step since we need the public audio URL
     let elAudioUrl: string | undefined;
+
     if (isElevenLabs && elVoiceId) {
-      if (!elApiKey) throw new Error("ElevenLabs API key is required. Add it in Settings or set ELEVENLABS_API_KEY.");
-      send("progress", { step: "elevenlabs", percent: 20, message: "Synthesizing voice with ElevenLabs…" });
+      if (!elApiKey) throw new Error("ElevenLabs API key is required. Add it in Voice Settings.");
+      updateJob(jobId, { step: "elevenlabs", percent: 20, message: "Synthesizing voice with ElevenLabs…" });
       const elResult = await synthesizeElevenLabs(script, elVoiceId, elApiKey);
-      // Construct a publicly accessible URL for the audio file
-      // Azure's servers need to reach this URL — use the Replit dev domain or PUBLIC_URL
       const publicDomain = process.env.REPLIT_DEV_DOMAIN || process.env.PUBLIC_URL;
       if (!publicDomain) throw new Error("Cannot determine public URL for ElevenLabs audio. Set REPLIT_DEV_DOMAIN or PUBLIC_URL.");
       elAudioUrl = `https://${publicDomain}/api/video/${elResult.filename}`;
-      // Convert ElevenLabs ms timings → WordTiming format (startSec/durationSec)
       wordTimings = elResult.wordTimings.map(t => ({
         word: t.word,
         startSec: t.start / 1000,
         durationSec: (t.end - t.start) / 1000,
       }));
-      req.log.info({ audioUrl: elAudioUrl, wordCount: wordTimings.length }, "ElevenLabs audio ready");
     } else if (captionStyle !== "none") {
       try {
         wordTimings = await getWordTimings(script, voice, pacingRate);
-        req.log.info({ wordCount: wordTimings.length }, "Azure word timings ready");
-      } catch (e) {
-        req.log.warn({ err: e }, "Word timings failed, continuing without");
+      } catch {
+        // captions will be skipped
       }
     }
 
-    send("progress", { step: "avatar_start", percent: 25, message: "Azure AI is rendering your avatar (2–5 min)…" });
+    updateJob(jobId, { step: "avatar_start", percent: 25, message: "Azure AI is rendering your avatar (2–5 min)…" });
 
     // ── Step 3: Avatar synthesis ──
-    // Use green screen when realism=true and no image background (for chroma key compositing)
     const useGreenScreen = realism && !bgImageUrl;
     const azureBgColor = resolvedBgColor1 + "FF";
 
@@ -156,17 +164,17 @@ router.post("/generate", async (req: Request, res: Response) => {
       script,
       character: avatar,
       style: avatarStyle,
-      voice: isElevenLabs ? "en-US-AvaMultilingualNeural" : voice, // fallback voice name (unused when audioUrl set)
+      voice: isElevenLabs ? "en-US-AvaMultilingualNeural" : voice,
       voiceStyle: voiceStyle || undefined,
       backgroundColor: azureBgColor,
       bgImageUrl: bgImageUrl || undefined,
       pacing,
       realism,
-      audioUrl: elAudioUrl, // set only for ElevenLabs; triggers PreSynthesizedAudio mode
+      audioUrl: elAudioUrl,
     };
 
     const avatarVideoPath = await generateAvatarVideo(avatarConfig);
-    send("progress", { step: "avatar_done", percent: 75, message: "Avatar rendered! Applying cinematic effects…" });
+    updateJob(jobId, { step: "avatar_done", percent: 75, message: "Avatar rendered! Applying cinematic effects…" });
 
     // ── Step 4: Post-process ──
     const outputFilename = `video_${videoId}.mp4`;
@@ -185,16 +193,14 @@ router.post("/generate", async (req: Request, res: Response) => {
       script,
     });
 
-    // ── Step 5: Generate thumbnail ──
-    send("progress", { step: "done", percent: 95, message: "Generating thumbnail…" });
+    // ── Step 5: Thumbnail ──
+    updateJob(jobId, { step: "thumbnail", percent: 95, message: "Generating thumbnail…" });
     const finalVideoPath = path.join(outputsDir, outputFilename);
     const thumbnailFilename = `thumb_${videoId}.jpg`;
     const thumbnailPath = path.join(outputsDir, thumbnailFilename);
     const thumbResult = await extractThumbnail(finalVideoPath, thumbnailPath);
 
-    send("progress", { step: "done", percent: 100, message: "Your video is ready!" });
-    send("done", {
-      success: true,
+    const result: JobResult = {
       videoId,
       script,
       videoUrl: `/api/video/${outputFilename}`,
@@ -204,14 +210,51 @@ router.post("/generate", async (req: Request, res: Response) => {
         bgColor2: resolvedBgColor2 ?? resolvedBgColor1,
         accentColor: resolvedAccent,
       },
-    });
+    };
+
+    updateJob(jobId, { status: "done", step: "done", percent: 100, message: "Your video is ready!", result });
   } catch (err) {
-    req.log.error({ err }, "Video generation failed");
     const message = err instanceof Error ? err.message : String(err);
-    send("error", { message });
-  } finally {
-    res.end();
+    updateJob(jobId, { status: "failed", error: message });
   }
+}
+
+// ─── POST /api/generate — start job, return jobId immediately ─────
+router.post("/generate", async (req: Request, res: Response) => {
+  const body = req.body as GenerateRequest;
+  const { topic, platform } = body;
+
+  if (!topic || !platform) {
+    res.status(400).json({ error: "topic and platform are required" });
+    return;
+  }
+
+  const jobId = uuidv4().replace(/-/g, "").slice(0, 16);
+  jobs.set(jobId, {
+    status: "pending",
+    step: "start",
+    percent: 0,
+    message: "Starting…",
+    createdAt: Date.now(),
+  });
+
+  // Fire and forget — client polls for progress
+  runGenerationJob(jobId, body).catch(() => {});
+
+  res.json({ jobId });
+});
+
+// ─── GET /api/jobs/:jobId — poll job status ───────────────────────
+router.get("/jobs/:jobId", (req: Request, res: Response) => {
+  const jobId = Array.isArray(req.params["jobId"])
+    ? req.params["jobId"][0]
+    : req.params["jobId"];
+  const job = jobs.get(jobId ?? "");
+  if (!job) {
+    res.status(404).json({ error: "Job not found. It may have expired (jobs are kept for 4 hours)." });
+    return;
+  }
+  res.json(job);
 });
 
 // ─── Video file serving ─────────────────────────────────────────
@@ -231,7 +274,6 @@ router.get("/video/:filename", (req: Request, res: Response) => {
 });
 
 // ─── Voice preview endpoint ─────────────────────────────────────
-// Generates a 5-second TTS sample of the selected voice
 router.post("/preview-voice", async (req: Request, res: Response) => {
   const { voice = "en-US-AvaMultilingualNeural" } = req.body as { voice?: string };
 
@@ -244,7 +286,6 @@ router.post("/preview-voice", async (req: Request, res: Response) => {
   }
 
   const sampleText = "Hi! I'm your AI video presenter. Here's what I'll sound like in your video.";
-
   const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">
   <voice name="${voice}">
     <prosody rate="0.95" pitch="-2%">${sampleText}</prosody>
