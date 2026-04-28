@@ -9,24 +9,18 @@ import fs from "fs/promises";
 import { logger } from "../lib/logger.js";
 import type { WordTiming } from "./speech.js";
 
-if (ffmpegPath) {
-  ffmpeg.setFfmpegPath(ffmpegPath);
-}
+if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const assetsDir = path.resolve(__dirname, "../assets");
 const outputsDir = path.resolve(__dirname, "../outputs");
 
-const VERTICAL_PLATFORMS = new Set([
-  "YouTube Shorts",
-  "Instagram Reels",
-  "Facebook Reels",
-]);
+const VERTICAL_PLATFORMS = new Set(["YouTube Shorts", "Instagram Reels", "Facebook Reels"]);
 
 export type CaptionStyle = "none" | "animated" | "static";
 
 // ─────────────────────────────────────────────
-// Helpers
+// Utility helpers
 // ─────────────────────────────────────────────
 
 async function getDuration(filePath: string): Promise<number> {
@@ -54,7 +48,6 @@ function toFFmpegHex(hex: string): string {
   return "0x7C3AED";
 }
 
-// RGB hex → ASS &HBBGGRR& color string
 function toAssColor(hex: string): string {
   const clean = hex.replace(/^#/, "").slice(0, 6).padEnd(6, "0");
   const r = clean.slice(0, 2);
@@ -71,9 +64,52 @@ function formatAssTime(totalSec: number): string {
   return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
 }
 
+// Extract first sentence from script for hook text
+function extractHookSentence(script: string): string {
+  const match = script.match(/^[^.!?]+[.!?]/);
+  const raw = match ? match[0] : script.slice(0, 80);
+  return raw
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .trim();
+}
+
 // ─────────────────────────────────────────────
-// CTA subtitle (bottom lower-third text)
+// ASS subtitle generators
 // ─────────────────────────────────────────────
+
+async function generateHookAssFile(
+  script: string,
+  outputPath: string,
+  w: number,
+  h: number,
+  accentColor: string
+): Promise<void> {
+  const hookText = extractHookSentence(script);
+  if (!hookText) return;
+  const isVertical = h > w;
+  const fontSize = isVertical ? 68 : 52;
+  const accentAss = toAssColor(accentColor);
+  const marginV = isVertical ? 120 : 80;
+
+  const content = `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${w}
+PlayResY: ${h}
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hook,Arial,${fontSize},&H00FFFFFF,${accentAss},&H00000000,&HCC000000,-1,0,0,0,100,100,0.5,0,3,10,0,8,60,60,${marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.00,Hook,,0,0,0,,{\\fad(0,300)}${hookText}
+`;
+  await fs.writeFile(outputPath, content, "utf8");
+}
+
 async function generateCtaAssFile(
   cta: string,
   outputPath: string,
@@ -84,7 +120,7 @@ async function generateCtaAssFile(
   lowerH: number
 ): Promise<void> {
   const endTime = formatAssTime(durationSec);
-  const fontSize = h >= 1080 ? 52 : 38;
+  const fontSize = h >= 1080 ? 48 : 36;
   const marginV = Math.round(lowerH * 0.35);
   const accentAss = toAssColor(accentColor);
   const content = `[Script Info]
@@ -104,9 +140,7 @@ Dialogue: 0,0:00:01.00,${endTime},CTA,,0,0,0,,${cta}
   await fs.writeFile(outputPath, content, "utf8");
 }
 
-// ─────────────────────────────────────────────
-// Animated word-by-word captions (HeyGen-style)
-// ─────────────────────────────────────────────
+// HeyGen-style animated captions: 3-word window, pill background, active word accent-colored
 async function generateAnimatedCaptionsAss(
   wordTimings: WordTiming[],
   outputPath: string,
@@ -116,11 +150,11 @@ async function generateAnimatedCaptionsAss(
   lowerH: number
 ): Promise<void> {
   const isVertical = h > w;
-  const fontSize = isVertical ? 72 : 56;
-  // Position captions in center-lower area (above lower-third)
-  const captionY = h - lowerH - (isVertical ? 180 : 140);
+  const baseFontSize = isVertical ? 52 : 42;
+  const activeFontSize = isVertical ? 58 : 46;
+  const captionY = h - lowerH - (isVertical ? 160 : 120);
   const accentAss = toAssColor(accentColor);
-  const WINDOW = 4; // words visible at a time
+  const WINDOW = 3; // max 3 words at a time
 
   const header = `[Script Info]
 ScriptType: v4.00+
@@ -130,7 +164,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,${fontSize},&H00FFFFFF,${accentAss},&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3.0,1.5,5,20,20,${captionY},1
+Style: Cap,Arial,${baseFontSize},&H00FFFFFF,${accentAss},&H00000000,&HBB000000,-1,0,0,0,100,100,0,0,3,12,0,5,40,40,${captionY},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -146,17 +180,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       ? formatAssTime(nextWt.startSec)
       : formatAssTime(wt.startSec + wt.durationSec + 0.25);
 
-    // Build sliding window of words
     const windowStart = Math.max(0, i - (WINDOW - 1));
     const windowWords = wordTimings.slice(windowStart, i + 1);
 
     const line = windowWords.map((w2, idx) => {
       const isActive = windowStart + idx === i;
       if (isActive) {
-        // Current word: accent color, bold, slightly larger
-        return `{\\c${accentAss}&\\b1\\fscx110\\fscy110}${w2.word}{\\c&H00FFFFFF&\\b0\\fscx100\\fscy100}`;
+        return `{\\c${accentAss}&\\b1\\fs${activeFontSize}\\shad1}${w2.word}{\\c&H00FFFFFF&\\b0\\fs${baseFontSize}\\shad0}`;
       }
-      return `{\\c&H00FFFFFF&\\b0}${w2.word}`;
+      return `{\\c&H00FFFFFF&\\b0\\fs${baseFontSize}}${w2.word}`;
     }).join(" ");
 
     events.push(`Dialogue: 0,${startTime},${endTime},Cap,,0,0,0,,${line}`);
@@ -165,9 +197,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   await fs.writeFile(outputPath, header + events.join("\n") + "\n", "utf8");
 }
 
-// ─────────────────────────────────────────────
-// Static captions from word timings (3-word lines)
-// ─────────────────────────────────────────────
+// Static captions: 3-word chunks with pill background
 async function generateStaticCaptionsAss(
   wordTimings: WordTiming[],
   outputPath: string,
@@ -176,9 +206,9 @@ async function generateStaticCaptionsAss(
   lowerH: number
 ): Promise<void> {
   const isVertical = h > w;
-  const fontSize = isVertical ? 62 : 48;
-  const captionY = h - lowerH - (isVertical ? 160 : 120);
-  const CHUNK = 4;
+  const fontSize = isVertical ? 54 : 42;
+  const captionY = h - lowerH - (isVertical ? 140 : 110);
+  const CHUNK = 3;
 
   const header = `[Script Info]
 ScriptType: v4.00+
@@ -188,7 +218,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,3.0,1.5,5,20,20,${captionY},1
+Style: Cap,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,-1,0,0,0,100,100,1,0,3,12,0,5,40,40,${captionY},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -210,8 +240,29 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 }
 
 // ─────────────────────────────────────────────
-// Main post-processing
+// Thumbnail extraction
 // ─────────────────────────────────────────────
+
+export async function extractThumbnail(
+  videoPath: string,
+  thumbnailPath: string
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    ffmpeg(videoPath)
+      .seekInput(2)
+      .frames(1)
+      .outputOptions(["-q:v 2"])
+      .output(thumbnailPath)
+      .on("end", () => { logger.info({ thumbnailPath }, "Thumbnail extracted"); resolve(thumbnailPath); })
+      .on("error", (err) => { logger.warn({ err }, "Thumbnail extraction failed"); resolve(null); })
+      .run();
+  });
+}
+
+// ─────────────────────────────────────────────
+// Main post-processing options
+// ─────────────────────────────────────────────
+
 export interface PostProcessOptions {
   platform?: string;
   logoUrl?: string;
@@ -223,6 +274,9 @@ export interface PostProcessOptions {
   wordTimings?: WordTiming[];
   captionStyle?: CaptionStyle;
   outputFilename?: string;
+  useGreenScreen?: boolean;
+  realism?: boolean;        // default true — enables chroma key, grain, Ken Burns, enhanced audio
+  script?: string;          // used for opening hook text
 }
 
 export async function postProcessAvatarVideo(
@@ -232,11 +286,18 @@ export async function postProcessAvatarVideo(
   const outputPath = path.join(outputsDir, options.outputFilename ?? "final.mp4");
   const duration = await getDuration(avatarVideoPath);
   const isVertical = VERTICAL_PLATFORMS.has(options.platform ?? "");
+  const realism = options.realism !== false; // default true
+  const useGreenScreen = options.useGreenScreen === true;
 
   const outW = isVertical ? 1080 : 1920;
   const outH = isVertical ? 1920 : 1080;
   const lowerH = Math.round(outH * 0.22);
   const barH = isVertical ? 5 : 4;
+
+  // Oversized dimensions for Ken Burns (3% larger)
+  const outW103 = Math.round(outW * 1.03);
+  const outH103 = Math.round(outH * 1.03);
+  const bgDur = Math.ceil(duration) + 2;
 
   const bgHex = toFFmpegHex((options.backgroundColor ?? "#000000FF").slice(0, 7));
   const bg2Hex = options.gradientColor2 ? toFFmpegHex(options.gradientColor2) : null;
@@ -262,18 +323,16 @@ export async function postProcessAvatarVideo(
   const musicAssetPath = path.join(assetsDir, "music.mp3");
   const musicPath = options.musicPath ?? (existsSync(musicAssetPath) ? musicAssetPath : null);
 
-  // ── CTA subtitle file ──
+  // ── ASS files ──
   let ctaAssPath: string | null = null;
   if (options.cta) {
     ctaAssPath = path.join(outputsDir, "cta.ass");
     await generateCtaAssFile(options.cta, ctaAssPath, duration, outW, outH, accentColor, lowerH);
   }
 
-  // ── Caption subtitle file ──
   let captionAssPath: string | null = null;
   const captionStyle = options.captionStyle ?? "animated";
   const wordTimings = options.wordTimings ?? [];
-
   if (captionStyle !== "none" && wordTimings.length > 0) {
     captionAssPath = path.join(outputsDir, "captions.ass");
     if (captionStyle === "animated") {
@@ -281,10 +340,17 @@ export async function postProcessAvatarVideo(
     } else {
       await generateStaticCaptionsAss(wordTimings, captionAssPath, outW, outH, lowerH);
     }
-    logger.info({ captionStyle, wordCount: wordTimings.length }, "Caption ASS file generated");
+    logger.info({ captionStyle, wordCount: wordTimings.length }, "Caption ASS generated");
   }
 
-  logger.info({ platform: options.platform, isVertical, outW, outH, useGradient, bgHex, bg2Hex, accentHex, captionStyle, duration }, "Post-processing avatar video");
+  // ── Opening hook text ASS ──
+  let hookAssPath: string | null = null;
+  if (options.script && realism) {
+    hookAssPath = path.join(outputsDir, "hook.ass");
+    await generateHookAssFile(options.script, hookAssPath, outW, outH, accentColor);
+  }
+
+  logger.info({ platform: options.platform, isVertical, outW, outH, useGreenScreen, useGradient, realism, captionStyle, duration }, "Post-processing avatar video");
 
   return new Promise((resolve, reject) => {
     let cmd = ffmpeg();
@@ -307,51 +373,69 @@ export async function postProcessAvatarVideo(
 
     const fp: string[] = [];
 
-    // ── 1. Background: gradient or flat ──
+    // ── 1. Background source (always explicit — needed for green screen AND Ken Burns) ──
     if (useGradient) {
-      const dur = Math.ceil(duration) + 2;
       if (isVertical) {
-        fp.push(`gradients=s=${outW}x${outH}:type=linear:x0=${outW / 2}:y0=0:x1=${outW / 2}:y1=${outH}:c0=${bgHex}:c1=${bg2Hex}:duration=${dur}:rate=30[grad_bg]`);
-        fp.push(`[${avatarIdx}:v]scale=${outW}:-2[av_s]`);
-        fp.push(`[grad_bg][av_s]overlay=(W-w)/2:(H-h)*3/5[av_framed]`);
+        fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=${outW103/2}:y0=0:x1=${outW103/2}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=30[bg_raw]`);
       } else {
-        fp.push(`gradients=s=${outW}x${outH}:type=linear:x0=0:y0=0:x1=${outW}:y1=${outH}:c0=${bgHex}:c1=${bg2Hex}:duration=${dur}:rate=30[grad_bg]`);
-        fp.push(`[${avatarIdx}:v]scale=${outW}:${outH}:force_original_aspect_ratio=decrease[av_s]`);
-        fp.push(`[grad_bg][av_s]overlay=(W-w)/2:(H-h)/2[av_framed]`);
+        fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=30[bg_raw]`);
       }
     } else {
+      fp.push(`color=c=${bgHex}:s=${outW103}x${outH103}:r=30:d=${bgDur}[bg_raw]`);
+    }
+
+    // ── 2. Ken Burns effect on background (subtle 3% zoom + slow pan) ──
+    if (realism) {
+      fp.push(`[bg_raw]crop=${outW}:${outH}:x='min(iw-ow\\,(iw-ow)*t/${duration})':y='(ih-oh)/2'[bg]`);
+    } else {
+      fp.push(`[bg_raw]crop=${outW}:${outH}:x='(iw-ow)/2':y='(ih-oh)/2'[bg]`);
+    }
+
+    // ── 3. Avatar compositing ──
+    let lastV = "av_framed";
+
+    if (useGreenScreen) {
+      // Chroma key: remove green screen, composite onto background
+      const avatarH = Math.round(outH * (isVertical ? 0.82 : 0.88));
+      const avatarY = outH - avatarH - (isVertical ? 50 : 30);
+      fp.push(`[${avatarIdx}:v]chromakey=color=0x00ff00:similarity=0.25:blend=0.05[ck_out]`);
+      fp.push(`[ck_out]scale=-2:${avatarH}[av_s]`);
+      fp.push(`[bg][av_s]overlay=(W-w)/2:${avatarY}[av_framed]`);
+    } else {
+      // Non-green-screen: scale avatar and overlay on background
       if (isVertical) {
-        fp.push(
-          `[${avatarIdx}:v]scale=${outW}:-2[av_s]`,
-          `[av_s]pad=${outW}:${outH}:(ow-iw)/2:(oh-ih)*3/5:color=${bgHex}[av_framed]`
-        );
+        fp.push(`[${avatarIdx}:v]scale=${outW}:-2[av_s]`);
+        fp.push(`[bg][av_s]overlay=(W-w)/2:(H-h)*3/5[av_framed]`);
       } else {
-        fp.push(
-          `[${avatarIdx}:v]scale=${outW}:${outH}:force_original_aspect_ratio=decrease,pad=${outW}:${outH}:(ow-iw)/2:(oh-ih)/2:color=${bgHex}[av_framed]`
-        );
+        fp.push(`[${avatarIdx}:v]scale=${outW}:${outH}:force_original_aspect_ratio=decrease[av_s]`);
+        fp.push(`[bg][av_s]overlay=(W-w)/2:(H-h)/2[av_framed]`);
       }
     }
 
-    let lastV = "av_framed";
+    // ── 4. Color grade + cinematic sharpening ──
+    if (realism) {
+      fp.push(`[${lastV}]eq=brightness=0.02:saturation=1.1:contrast=1.05[graded]`);
+      fp.push(`[graded]unsharp=3:3:0.6:3:3:0.0[sharpened]`);
+      fp.push(`[sharpened]vignette=PI/6:0.8[vignetted]`);
+      lastV = "vignetted";
+    } else {
+      fp.push(`[${lastV}]unsharp=5:5:0.8:5:5:0[sharpened]`);
+      fp.push(`[sharpened]vignette=PI/5:0.8[vignetted]`);
+      lastV = "vignetted";
+    }
 
-    // ── 2. Cinematic: slight sharpen + vignette ──
-    fp.push(`[${lastV}]unsharp=5:5:0.8:5:5:0[sharpened]`);
-    lastV = "sharpened";
-    fp.push(`[${lastV}]vignette=PI/5:0.8[vignetted]`);
-    lastV = "vignetted";
-
-    // ── 3. Professional lower-third (two-layer dark overlay) ──
+    // ── 5. Professional lower-third (two-layer dark overlay) ──
     const lt = lowerH;
     const lt2 = Math.round(lt * 0.55);
     fp.push(`[${lastV}]drawbox=x=0:y=ih-${lt}:w=iw:h=${lt}:c=black@0.52:t=fill[with_lt1]`);
     fp.push(`[with_lt1]drawbox=x=0:y=ih-${lt2}:w=iw:h=${lt2}:c=black@0.22:t=fill[with_lt]`);
     lastV = "with_lt";
 
-    // ── 4. Brand accent line above lower-third ──
+    // ── 6. Brand accent line above lower-third ──
     fp.push(`[${lastV}]drawbox=x=0:y=ih-${lt + barH}:w=iw:h=${barH}:c=${accentHex}:t=fill[with_bar]`);
     lastV = "with_bar";
 
-    // ── 5. Logo — top-right ──
+    // ── 7. Logo — top-right ──
     if (logoIdx >= 0) {
       const logoW = isVertical ? Math.round(outW * 0.18) : Math.round(outW * 0.10);
       const pad = isVertical ? 22 : 16;
@@ -360,41 +444,67 @@ export async function postProcessAvatarVideo(
       lastV = "with_logo";
     }
 
-    // ── 6. Word captions (above lower-third center area) ──
+    // ── 8. Opening hook text (first sentence, 0-2s, top of frame) ──
+    if (hookAssPath) {
+      const escapedHook = hookAssPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+      fp.push(`[${lastV}]subtitles='${escapedHook}'[with_hook]`);
+      lastV = "with_hook";
+    }
+
+    // ── 9. Word captions (above lower-third center) ──
     if (captionAssPath) {
       const escaped = captionAssPath.replace(/\\/g, "/").replace(/:/g, "\\:");
       fp.push(`[${lastV}]subtitles='${escaped}'[with_caps]`);
       lastV = "with_caps";
     }
 
-    // ── 7. CTA text in lower-third ──
+    // ── 10. CTA text in lower-third ──
     if (ctaAssPath) {
       const escaped = ctaAssPath.replace(/\\/g, "/").replace(/:/g, "\\:");
       fp.push(`[${lastV}]subtitles='${escaped}'[with_cta]`);
       lastV = "with_cta";
     }
 
-    // ── 8. Cinematic fade in / fade out ──
+    // ── 11. Film grain (after all overlays, for organic texture) ──
+    if (realism) {
+      fp.push(`[${lastV}]noise=alls=4:allf=t+u[grained]`);
+      lastV = "grained";
+    }
+
+    // ── 12. Cinematic fade in / fade out ──
     const fadeDur = 0.4;
     const fadeOutStart = Math.max(0, duration - fadeDur);
-    fp.push(
-      `[${lastV}]fade=t=in:st=0:d=${fadeDur},fade=t=out:st=${fadeOutStart}:d=${fadeDur}[faded]`
-    );
+    fp.push(`[${lastV}]fade=t=in:st=0:d=${fadeDur},fade=t=out:st=${fadeOutStart}:d=${fadeDur}[faded]`);
     lastV = "faded";
 
-    // ── 9. FPS normalize ──
+    // ── 13. FPS normalize to exactly 30fps ──
     fp.push(`[${lastV}]fps=30[vout]`);
 
     // ── Audio chain ──
     const af: string[] = [];
+    const musicFadeOut = Math.max(0, duration - 1.5);
+
     if (musicIdx >= 0) {
-      af.push(
-        `[${avatarIdx}:a]aformat=fltp:44100:stereo,volume=1.0[speech]`,
-        `[${musicIdx}:a]aformat=fltp:44100:stereo,volume=0.07[bg_music]`,
-        `[speech][bg_music]amix=inputs=2:duration=first[aout]`
-      );
+      if (realism) {
+        // Enhanced: loudnorm + subtle room echo, music with proper fade
+        af.push(
+          `[${avatarIdx}:a]aformat=fltp:44100:stereo,loudnorm=I=-16:TP=-1.5:LRA=11,aecho=0.8:0.9:40:0.3[speech_e]`,
+          `[${musicIdx}:a]aformat=fltp:44100:stereo,volume=0.06,afade=t=in:st=0:d=1:curve=qua,afade=t=out:st=${musicFadeOut}:d=1.5:curve=qua[bg_music]`,
+          `[speech_e][bg_music]amix=inputs=2:duration=first[aout]`
+        );
+      } else {
+        af.push(
+          `[${avatarIdx}:a]aformat=fltp:44100:stereo,volume=1.0[speech]`,
+          `[${musicIdx}:a]aformat=fltp:44100:stereo,volume=0.07[bg_music]`,
+          `[speech][bg_music]amix=inputs=2:duration=first[aout]`
+        );
+      }
     } else {
-      af.push(`[${avatarIdx}:a]aformat=fltp:44100:stereo[aout]`);
+      if (realism) {
+        af.push(`[${avatarIdx}:a]aformat=fltp:44100:stereo,loudnorm=I=-16:TP=-1.5:LRA=11,aecho=0.8:0.9:40:0.3[aout]`);
+      } else {
+        af.push(`[${avatarIdx}:a]aformat=fltp:44100:stereo[aout]`);
+      }
     }
 
     const fullFilter = [...fp, ...af].join(";");

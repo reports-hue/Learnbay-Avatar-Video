@@ -16,19 +16,62 @@ const client = new OpenAI({
 export type ScriptStyle = "viral" | "listicle" | "story" | "educational" | "sales";
 
 const DURATIONS: Record<string, string> = {
-  "YouTube Shorts": "20-30 seconds",
-  "Instagram Reels": "20-30 seconds",
-  "Facebook Reels": "20-30 seconds",
-  "YouTube Video": "60-90 seconds",
-  "Landscape Video": "30-60 seconds",
+  "YouTube Shorts": "25-35 seconds when spoken at a natural pace",
+  "Instagram Reels": "25-35 seconds when spoken at a natural pace",
+  "Facebook Reels": "25-35 seconds when spoken at a natural pace",
+  "YouTube Video": "70-90 seconds when spoken at a natural pace",
+  "Landscape Video": "40-60 seconds when spoken at a natural pace",
 };
 
+// Natural human speech rules applied to all styles
+const HUMAN_SPEECH_RULES = `
+MANDATORY HUMAN SPEECH RULES (apply to every script):
+- Write EXACTLY how a real person talks out loud — NOT how someone writes
+- Use contractions always: I'm, we've, you'll, it's, they're, don't, can't, that's
+- Include ONE natural filler transition in the script: "So here's the thing", or "And look", or "Now here's what's interesting", or "But wait"
+- Vary sentence length — mix very short punchy sentences (3-5 words) with longer explanatory ones (12-18 words)
+- Never start two consecutive sentences with the same word
+- NO bullet points, NO numbered lists, NO list format whatsoever
+- NO stage directions, NO speaker labels, NO [brackets], NO timestamps
+- After writing the script, review it and replace any phrase that sounds AI-generated or overly formal with a more casual human equivalent
+- Use "..." for natural pauses where a speaker would breathe
+- The script should feel like real speech, unscripted and personal`;
+
 const STYLE_PROMPTS: Record<ScriptStyle, string> = {
-  viral: `Open with a shocking statement or question that stops the scroll. Fast-paced, punchy sentences. Create urgency. End with a strong CTA to follow.`,
-  listicle: `Structure as a numbered list (3-5 points). Clear intro: "Here are X [things/tips/secrets]..." Each point is one sentence max. Rapid-fire delivery.`,
-  story: `Open with "I used to..." or "Last [time period], I..." Build tension, reveal the lesson, apply it to the viewer. Personal and relatable.`,
-  educational: `Explain one key concept clearly. Use an analogy. Give one actionable takeaway. Position as the expert. "What most people don't know is..."`,
-  sales: `Problem → Agitate → Solve. Open with the pain point, make the viewer feel it, then reveal the solution as the hero. End with urgency CTA.`,
+  viral: `
+Style: VIRAL HOOK — stops the scroll in the first 2 seconds.
+- Open with a bold contrarian statement or surprising stat. First 3 seconds must create a pattern interrupt.
+- Example openers: "Nobody talks about this, but..." / "I tested this for 30 days and..." / "This one thing changed everything for me..."
+- Fast-paced energy throughout. Create urgency. Build to a punchy revelation.
+- End with a strong call to follow or subscribe.`,
+
+  listicle: `
+Style: LISTICLE — but spoken naturally, NOT formatted as a list.
+- Do NOT say "Number one... Number two..." — instead weave the points naturally: "First up..." then "And then there's..." then "But the one that surprised me most..."
+- Clear natural intro: "I've got X things that..." — but phrased conversationally.
+- Each point gets one crisp sentence. Keep it rapid-fire.
+- End with which point hit hardest for you personally.`,
+
+  story: `
+Style: PERSONAL STORY — real and relatable.
+- Begin in the MIDDLE of action: "I was..." or "Last week I..." or "Three months ago I tried something weird..."
+- Build tension naturally. Use "And then..." and "That's when I realized..."
+- Reveal the lesson like you're telling a friend, not a Ted Talk.
+- Apply it directly to the viewer at the end: "So if you're dealing with..."`,
+
+  educational: `
+Style: EDUCATIONAL — expert but approachable.
+- Lead with what most people get WRONG: "Most people think... but actually..."
+- Use a simple analogy to explain the concept (the simpler the better)
+- Give ONE concrete actionable takeaway
+- Position yourself as someone who figured this out, not a textbook: "What I've learned is..."`,
+
+  sales: `
+Style: SALES — emotional, problem-focused, authentic.
+- Open by naming the pain point directly and personally: "If you're tired of..." or "I know what it feels like when..."
+- Agitate it — make the viewer feel understood
+- Then pivot to the solution naturally: "That's exactly why..."
+- End with a specific CTA that creates mild urgency — not pushy, just clear`,
 };
 
 export interface BrandTheme {
@@ -146,29 +189,31 @@ Return ONLY valid JSON (no code blocks) with these exact keys:
   }
 }
 
-export async function generateScript(topic: string, platform: string, style: ScriptStyle = "viral"): Promise<string> {
-  const duration = DURATIONS[platform] ?? "20-30 seconds";
+export async function generateScript(
+  topic: string,
+  platform: string,
+  style: ScriptStyle = "viral"
+): Promise<string> {
+  const duration = DURATIONS[platform] ?? "25-35 seconds when spoken at a natural pace";
   const styleGuide = STYLE_PROMPTS[style];
 
-  const prompt = `Create a highly engaging ${platform} video script about: ${topic}
+  const prompt = `Write a ${platform} video script about this topic: ${topic}
 
-Style: ${styleGuide}
+${styleGuide}
 
-Rules:
-- Strong hook in the FIRST 2 seconds
-- Short punchy sentences — max 10 words each
-- Natural pauses with ... where the speaker should breathe
-- End with: Follow Libraryminds
-- Target duration: ${duration}
-- NO stage directions, NO speaker labels, NO brackets, NO timestamps
-- Return clean script text ONLY`;
+${HUMAN_SPEECH_RULES}
 
-  logger.info({ topic, platform, style }, "Generating script");
+Additional requirements:
+- Target spoken duration: ${duration}
+- Strong hook in the FIRST 2 seconds that would stop someone scrolling
+- Return ONLY the clean spoken script text — no notes, no formatting, no headers`;
+
+  logger.info({ topic, platform, style }, "Generating natural-speech script");
 
   const response = await client.chat.completions.create({
     model: deploymentName,
     messages: [{ role: "user", content: prompt }],
-    max_tokens: 600,
+    max_tokens: 700,
     temperature: 0.88,
   });
 

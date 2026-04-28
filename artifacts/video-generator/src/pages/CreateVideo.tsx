@@ -5,17 +5,19 @@ import { Badge } from "@/components/ui/badge";
 import {
   ChevronLeft, ChevronRight, Sparkles, Check, Download,
   Library, RotateCcw, Building2, AlertCircle,
+  Volume2, VolumeX, Play, Loader2, Zap, Gauge,
 } from "lucide-react";
 import type { BrandProfile, VideoEntry, Page } from "@/lib/types";
 import { PLATFORMS, SCRIPT_STYLES, AVATARS, VOICES, VOICE_STYLES, CAPTION_STYLES, SCENE_PRESETS } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
 // ─── Types ──────────────────────────────────────────────────────
+type Pacing = "slow" | "natural" | "fast";
 interface ProgressState { step: string; percent: number; message: string }
 interface BrandTheme { bgColor1: string; bgColor2: string; accentColor: string }
 interface GenerationResult {
-  videoId: string; videoUrl: string; script: string;
-  brandTheme: BrandTheme;
+  videoId: string; videoUrl: string; thumbnailUrl?: string;
+  script: string; brandTheme: BrandTheme;
 }
 
 const STEPS = [
@@ -25,7 +27,13 @@ const STEPS = [
   { id: 4, label: "Generate" },
 ];
 
-// ─── Pill button ────────────────────────────────────────────────
+const PACING_OPTIONS: { value: Pacing; label: string; desc: string }[] = [
+  { value: "slow", label: "Slow", desc: "0.88×" },
+  { value: "natural", label: "Natural", desc: "0.95×" },
+  { value: "fast", label: "Fast", desc: "1.05×" },
+];
+
+// ─── Sub-components ──────────────────────────────────────────────
 function Pill({ active, disabled, onClick, children, className }: {
   active: boolean; disabled?: boolean; onClick: () => void;
   children: React.ReactNode; className?: string;
@@ -41,7 +49,6 @@ function Pill({ active, disabled, onClick, children, className }: {
   );
 }
 
-// ─── Color input ────────────────────────────────────────────────
 function ColorInput({ label, value, onChange, disabled }: { label: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
     <div className="space-y-1.5">
@@ -59,7 +66,6 @@ function SLabel({ children }: { children: React.ReactNode }) {
   return <p className="label-xs mb-2">{children}</p>;
 }
 
-// ─── Step indicator ─────────────────────────────────────────────
 function StepBar({ step }: { step: number }) {
   return (
     <div className="flex items-center gap-1 mb-8">
@@ -88,7 +94,7 @@ function StepBar({ step }: { step: number }) {
   );
 }
 
-// ─── Main Component ─────────────────────────────────────────────
+// ─── Main ────────────────────────────────────────────────────────
 interface Props {
   brand: BrandProfile;
   addVideo: (v: VideoEntry) => void;
@@ -114,14 +120,23 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   const [customCta, setCustomCta] = useState(brand.defaultCta || "");
   const [bgImageUrl, setBgImageUrl] = useState("");
 
-  // Step 3
+  // Step 3 — avatar & voice
   const [avatar, setAvatar] = useState(brand.defaultAvatar || "lisa");
   const [avatarStyle, setAvatarStyle] = useState(brand.defaultAvatarStyle || "graceful-sitting");
   const [voice, setVoice] = useState(brand.defaultVoice || "en-US-AvaMultilingualNeural");
   const [voiceStyle, setVoiceStyle] = useState(brand.defaultVoiceStyle || "");
   const [captionStyle, setCaptionStyle] = useState(brand.defaultCaptionStyle || "animated");
 
-  // Generation
+  // Step 3 — realism controls
+  const [realism, setRealism] = useState(true);
+  const [pacing, setPacing] = useState<Pacing>("natural");
+
+  // Voice preview
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Generation state
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const [liveScript, setLiveScript] = useState<string | null>(null);
@@ -139,6 +154,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   function handleVoiceChange(v: string) {
     setVoice(v);
     setVoiceStyle("");
+    stopPreview();
   }
 
   function handleScenePreset(p: string) {
@@ -147,12 +163,49 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
     if (pr?.accent) setCustomPrimary(pr.accent);
   }
 
+  function stopPreview() {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current = null;
+    }
+  }
+
+  async function previewVoice() {
+    stopPreview();
+    setIsPreviewing(true);
+    setPreviewError(null);
+    try {
+      const res = await fetch("/api/preview-voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voice }),
+      });
+      if (!res.ok) {
+        const err = await res.json() as { error?: string };
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => { setIsPreviewing(false); URL.revokeObjectURL(url); };
+      audio.onerror = () => { setIsPreviewing(false); };
+      await audio.play();
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err));
+      setIsPreviewing(false);
+    }
+  }
+
   function buildPayload(): Record<string, unknown> {
     const base = {
       topic: topic.trim(), platform, scriptStyle,
       avatar, avatarStyle, voice,
       voiceStyle: voiceStyle || undefined,
       captionStyle,
+      realism,
+      pacing,
     };
 
     if (brandMode === "saved" && hasBrand) {
@@ -237,6 +290,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                 const r: GenerationResult = {
                   videoId: data.videoId as string,
                   videoUrl: (data.videoUrl as string) + "?t=" + Date.now(),
+                  thumbnailUrl: data.thumbnailUrl ? (data.thumbnailUrl as string) + "?t=" + Date.now() : undefined,
                   script: data.script as string,
                   brandTheme: data.brandTheme as BrandTheme,
                 };
@@ -252,6 +306,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   voice,
                   avatar,
                   videoUrl: data.videoUrl as string,
+                  thumbnailUrl: data.thumbnailUrl as string | undefined,
                   script: r.script,
                   brandTheme: r.brandTheme,
                   createdAt: new Date().toISOString(),
@@ -283,6 +338,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
     setProgress(null);
     setLiveScript(null);
     setGenError(null);
+    stopPreview();
   }
 
   const selectedPreset = SCENE_PRESETS.find((p) => p.value === scenePreset);
@@ -296,7 +352,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
 
       <StepBar step={step} />
 
-      {/* ────────────────────────────────────────────── STEP 1 */}
+      {/* ──────────────────────────────────── STEP 1 — Content */}
       {step === 1 && (
         <div className="space-y-6">
           <div className="space-y-1.5">
@@ -305,8 +361,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
               type="text" value={topic} onChange={(e) => setTopic(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && topic.trim() && setStep(2)}
               placeholder="e.g. 5 tips to grow your personal brand in 2025"
-              className="input text-base"
-              autoFocus
+              className="input text-base" autoFocus
             />
           </div>
 
@@ -324,7 +379,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                 <button key={s.value} onClick={() => setScriptStyle(s.value)}
                   className={cn(
                     "flex flex-col items-center gap-1.5 py-2.5 rounded-lg border text-xs font-medium transition-all",
-                    scriptStyle === s.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                    scriptStyle === s.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
                   )}
                 >
                   <span className="text-lg">{s.emoji}</span>
@@ -343,7 +398,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
         </div>
       )}
 
-      {/* ────────────────────────────────────────────── STEP 2 */}
+      {/* ──────────────────────────────────── STEP 2 — Brand */}
       {step === 2 && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-3">
@@ -399,9 +454,6 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   </span>
                 ))}
               </div>
-              {brand.defaultCta && (
-                <div className="text-xs text-muted-foreground">CTA: <span className="text-foreground font-medium">"{brand.defaultCta}"</span></div>
-              )}
             </div>
           )}
 
@@ -417,9 +469,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                         scenePreset === p.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
                       )}
                     >
-                      {p.emoji ? (
-                        <span className="text-lg">{p.emoji}</span>
-                      ) : (
+                      {p.emoji ? <span className="text-lg">{p.emoji}</span> : (
                         <span className="flex gap-0.5">
                           <span className="w-4 h-4 rounded-l-full" style={{ background: p.bg1! }} />
                           <span className="w-4 h-4 rounded-r-full" style={{ background: p.bg2! }} />
@@ -434,7 +484,9 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                     placeholder="https://example.com/background.jpg" className="input mt-2" />
                 )}
                 {scenePreset === "auto" && (
-                  <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1"><Sparkles className="w-3 h-3 text-primary" /> AI picks gradient colors for your topic</p>
+                  <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-primary" /> AI picks gradient colors for your topic
+                  </p>
                 )}
               </div>
 
@@ -470,9 +522,10 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
         </div>
       )}
 
-      {/* ────────────────────────────────────────────── STEP 3 */}
+      {/* ──────────────────────────────────── STEP 3 — Avatar & Voice */}
       {step === 3 && (
         <div className="space-y-6">
+          {/* Character */}
           <div>
             <SLabel>Character</SLabel>
             <div className="grid grid-cols-5 gap-2">
@@ -490,6 +543,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             </div>
           </div>
 
+          {/* Avatar Style */}
           <div>
             <SLabel>Avatar Style</SLabel>
             <div className="flex flex-wrap gap-2">
@@ -501,22 +555,51 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <SLabel>Voice</SLabel>
-              <select value={voice} onChange={(e) => handleVoiceChange(e.target.value)} className="input cursor-pointer text-xs">
-                {VOICES.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
-              </select>
+          {/* Voice + Voice Preview */}
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <SLabel>Voice</SLabel>
+                <select value={voice} onChange={(e) => handleVoiceChange(e.target.value)} className="input cursor-pointer text-xs">
+                  {VOICES.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <SLabel>Voice Emotion</SLabel>
+                <select value={voiceStyle} onChange={(e) => setVoiceStyle(e.target.value)} disabled={voiceStyleOptions.length === 0} className="input cursor-pointer text-xs disabled:opacity-40">
+                  <option value="">Default</option>
+                  {voiceStyleOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <SLabel>Voice Emotion</SLabel>
-              <select value={voiceStyle} onChange={(e) => setVoiceStyle(e.target.value)} disabled={voiceStyleOptions.length === 0} className="input cursor-pointer text-xs disabled:opacity-40">
-                <option value="">Default</option>
-                {voiceStyleOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
+
+            {/* Voice Preview button */}
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={previewVoice} disabled={isPreviewing}
+                className="gap-2 text-xs">
+                {isPreviewing ? (
+                  <><Volume2 className="w-3.5 h-3.5 text-primary animate-pulse" /> Playing…</>
+                ) : (
+                  <><Play className="w-3.5 h-3.5" /> Preview Voice</>
+                )}
+              </Button>
+              {isPreviewing && (
+                <Button size="sm" variant="ghost" onClick={stopPreview} className="gap-1.5 text-xs text-muted-foreground">
+                  <VolumeX className="w-3.5 h-3.5" /> Stop
+                </Button>
+              )}
+              {previewError && (
+                <span className="text-xs text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {previewError}
+                </span>
+              )}
+              {!previewError && !isPreviewing && (
+                <span className="text-xs text-muted-foreground">Hear a 5-second sample before generating</span>
+              )}
             </div>
           </div>
 
+          {/* Caption Style */}
           <div>
             <SLabel>Caption Style</SLabel>
             <div className="flex gap-2">
@@ -535,6 +618,65 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             </div>
           </div>
 
+          {/* ── Realism Mode + Pacing (production quality controls) ── */}
+          <div className="bg-gray-50 border border-border rounded-xl p-4 space-y-4">
+            <p className="text-xs font-semibold text-foreground flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5 text-primary" /> Generation Settings
+            </p>
+
+            {/* Realism Mode toggle */}
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">Realism Mode</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Chroma key compositing, color grade, film grain, Ken Burns effect, broadcast-quality audio
+                </p>
+              </div>
+              <button
+                onClick={() => setRealism(!realism)}
+                className={cn(
+                  "relative flex-shrink-0 w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none",
+                  realism ? "bg-primary" : "bg-gray-300"
+                )}
+                role="switch" aria-checked={realism}
+              >
+                <span className={cn(
+                  "absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200",
+                  realism ? "translate-x-5" : "translate-x-0"
+                )} />
+              </button>
+            </div>
+
+            {/* Pacing slider */}
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Gauge className="w-3.5 h-3.5 text-muted-foreground" />
+                <p className="text-sm font-medium text-foreground">Speaking Pace</p>
+                <Badge variant="secondary" className="text-[10px] ml-auto">
+                  {PACING_OPTIONS.find(p => p.value === pacing)?.label} ({PACING_OPTIONS.find(p => p.value === pacing)?.desc})
+                </Badge>
+              </div>
+              <div className="flex gap-1.5">
+                {PACING_OPTIONS.map((p) => (
+                  <button key={p.value} onClick={() => setPacing(p.value)}
+                    className={cn(
+                      "flex-1 py-2 rounded-lg border text-xs font-medium transition-all",
+                      pacing === p.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/30"
+                    )}
+                  >
+                    <div>{p.label}</div>
+                    <div className="text-[10px] opacity-70">{p.desc}</div>
+                  </button>
+                ))}
+              </div>
+              {!realism && (
+                <p className="text-[11px] text-amber-600 mt-2 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> Pacing only applies in Realism Mode
+                </p>
+              )}
+            </div>
+          </div>
+
           <div className="flex justify-between pt-2">
             <Button variant="outline" onClick={() => setStep(2)}><ChevronLeft className="w-4 h-4" /> Back</Button>
             <Button onClick={() => setStep(4)}>Review & Generate <ChevronRight className="w-4 h-4" /></Button>
@@ -542,7 +684,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
         </div>
       )}
 
-      {/* ────────────────────────────────────────────── STEP 4 */}
+      {/* ──────────────────────────────────── STEP 4 — Generate */}
       {step === 4 && (
         <div className="space-y-6">
           {!result && (
@@ -557,6 +699,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   { label: "Voice", value: VOICES.find((v) => v.value === voice)?.label.split(" – ")[0] ?? voice },
                   { label: "Captions", value: CAPTION_STYLES.find((c) => c.value === captionStyle)?.label ?? captionStyle },
                   { label: "Brand", value: brandMode === "saved" ? brand.companyName : `Custom · ${selectedPreset?.label ?? scenePreset}` },
+                  { label: "Quality", value: realism ? `Realism Mode · ${PACING_OPTIONS.find(p => p.value === pacing)?.label} pace` : "Draft Mode" },
                 ].map(({ label, value }) => (
                   <div key={label}>
                     <p className="text-muted-foreground">{label}</p>
@@ -564,6 +707,12 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   </div>
                 ))}
               </div>
+              {realism && (
+                <div className="flex items-center gap-1.5 text-xs text-primary bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
+                  <Zap className="w-3.5 h-3.5 flex-shrink-0" />
+                  Realism Mode: green screen compositing, color grade, film grain, SSML voice, broadcast audio
+                </div>
+              )}
             </div>
           )}
 
@@ -645,6 +794,23 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   ))}
                 </div>
               </div>
+
+              {/* Thumbnail preview (if available) */}
+              {result.thumbnailUrl && (
+                <div className="relative">
+                  <img
+                    src={result.thumbnailUrl}
+                    alt="Video thumbnail"
+                    className="w-full rounded-lg object-cover bg-gray-100"
+                    onError={(e) => (e.currentTarget.style.display = "none")}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-12 h-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
+                      <Play className="w-5 h-5 text-white ml-0.5" />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <video src={result.videoUrl} controls playsInline className="w-full rounded-lg bg-black" />
 

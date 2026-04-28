@@ -3,14 +3,21 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
 import { v4 as uuidv4 } from "uuid";
+import axios from "axios";
 import { generateScript, generateBrandTheme, type ScriptStyle } from "../services/openai.js";
-import { generateAvatarVideo, type AvatarJobConfig } from "../services/avatarService.js";
-import { postProcessAvatarVideo, type CaptionStyle } from "../services/ffmpegService.js";
+import { generateAvatarVideo, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
+import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle } from "../services/ffmpegService.js";
 import { getWordTimings } from "../services/speech.js";
 
 const router: IRouter = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const outputsDir = path.resolve(__dirname, "../outputs");
+
+const PACING_SSML_RATE: Record<PacingRate, string> = {
+  slow: "0.88",
+  natural: "0.95",
+  fast: "1.05",
+};
 
 export interface GenerateRequest {
   topic?: string;
@@ -28,8 +35,11 @@ export interface GenerateRequest {
   cta?: string;
   captionStyle?: CaptionStyle;
   autoBackground?: boolean;
+  realism?: boolean;
+  pacing?: PacingRate;
 }
 
+// ─── Video generation (SSE) ─────────────────────────────────────
 router.post("/generate", async (req: Request, res: Response) => {
   const {
     topic,
@@ -47,6 +57,8 @@ router.post("/generate", async (req: Request, res: Response) => {
     cta,
     captionStyle = "animated",
     autoBackground = false,
+    realism = true,
+    pacing = "natural",
   } = req.body as GenerateRequest;
 
   if (!topic || !platform) {
@@ -69,10 +81,10 @@ router.post("/generate", async (req: Request, res: Response) => {
   }
 
   const videoId = uuidv4().replace(/-/g, "").slice(0, 12);
-  req.log.info({ topic, platform, avatar, voice, scriptStyle, captionStyle, autoBackground, videoId }, "Starting video generation");
+  req.log.info({ topic, platform, avatar, voice, scriptStyle, captionStyle, realism, pacing, videoId }, "Starting video generation");
 
   try {
-    // Step 1: Script + brand theme (parallel)
+    // ── Step 1: Script + brand theme (parallel) ──
     send("progress", { step: "script", percent: 5, message: "Crafting your AI script…" });
 
     const [script, brandThemeResult] = await Promise.all([
@@ -92,11 +104,12 @@ router.post("/generate", async (req: Request, res: Response) => {
 
     send("progress", { step: "script_done", percent: 18, message: "Script ready. Getting word timings…", script });
 
-    // Step 2: Word timings (for captions) — run while avatar renders
+    // ── Step 2: Word timings (for captions) ──
+    const pacingRate = PACING_SSML_RATE[pacing] ?? "0.95";
     let wordTimings: import("../services/speech.js").WordTiming[] = [];
     if (captionStyle !== "none") {
       try {
-        wordTimings = await getWordTimings(script, voice);
+        wordTimings = await getWordTimings(script, voice, pacingRate);
         req.log.info({ wordCount: wordTimings.length }, "Word timings ready");
       } catch (e) {
         req.log.warn({ err: e }, "Word timings failed, continuing without");
@@ -105,22 +118,27 @@ router.post("/generate", async (req: Request, res: Response) => {
 
     send("progress", { step: "avatar_start", percent: 25, message: "Azure AI is rendering your avatar (2–5 min)…" });
 
-    // Step 3: Avatar synthesis
+    // ── Step 3: Avatar synthesis ──
+    // Use green screen when realism=true and no image background (for chroma key compositing)
+    const useGreenScreen = realism && !bgImageUrl;
     const azureBgColor = resolvedBgColor1 + "FF";
+
     const avatarConfig: AvatarJobConfig = {
       script,
       character: avatar,
       style: avatarStyle,
       voice,
       voiceStyle: voiceStyle || undefined,
-      backgroundColor: bgImageUrl ? "#000000FF" : azureBgColor,
+      backgroundColor: azureBgColor,
       bgImageUrl: bgImageUrl || undefined,
+      pacing,
+      realism,
     };
 
     const avatarVideoPath = await generateAvatarVideo(avatarConfig);
-    send("progress", { step: "avatar_done", percent: 75, message: "Avatar rendered. Applying cinematic effects…" });
+    send("progress", { step: "avatar_done", percent: 75, message: "Avatar rendered! Applying cinematic effects…" });
 
-    // Step 4: Post-process
+    // ── Step 4: Post-process ──
     const outputFilename = `video_${videoId}.mp4`;
     await postProcessAvatarVideo(avatarVideoPath, {
       platform,
@@ -132,7 +150,17 @@ router.post("/generate", async (req: Request, res: Response) => {
       wordTimings: wordTimings.length > 0 ? wordTimings : undefined,
       captionStyle,
       outputFilename,
+      useGreenScreen,
+      realism,
+      script,
     });
+
+    // ── Step 5: Generate thumbnail ──
+    send("progress", { step: "done", percent: 95, message: "Generating thumbnail…" });
+    const finalVideoPath = path.join(outputsDir, outputFilename);
+    const thumbnailFilename = `thumb_${videoId}.jpg`;
+    const thumbnailPath = path.join(outputsDir, thumbnailFilename);
+    const thumbResult = await extractThumbnail(finalVideoPath, thumbnailPath);
 
     send("progress", { step: "done", percent: 100, message: "Your video is ready!" });
     send("done", {
@@ -140,6 +168,7 @@ router.post("/generate", async (req: Request, res: Response) => {
       videoId,
       script,
       videoUrl: `/api/video/${outputFilename}`,
+      thumbnailUrl: thumbResult ? `/api/video/${thumbnailFilename}` : null,
       brandTheme: {
         bgColor1: resolvedBgColor1,
         bgColor2: resolvedBgColor2 ?? resolvedBgColor1,
@@ -155,6 +184,7 @@ router.post("/generate", async (req: Request, res: Response) => {
   }
 });
 
+// ─── Video file serving ─────────────────────────────────────────
 router.get("/video/:filename", (req: Request, res: Response) => {
   const filename = Array.isArray(req.params["filename"])
     ? req.params["filename"][0]
@@ -168,6 +198,48 @@ router.get("/video/:filename", (req: Request, res: Response) => {
   }
 
   res.sendFile(filePath);
+});
+
+// ─── Voice preview endpoint ─────────────────────────────────────
+// Generates a 5-second TTS sample of the selected voice
+router.post("/preview-voice", async (req: Request, res: Response) => {
+  const { voice = "en-US-AvaMultilingualNeural" } = req.body as { voice?: string };
+
+  const region = process.env.AZURE_SPEECH_REGION ?? "eastus";
+  const key = process.env.AZURE_SPEECH_KEY ?? "";
+
+  if (!key) {
+    res.status(503).json({ error: "Azure Speech not configured" });
+    return;
+  }
+
+  const sampleText = "Hi! I'm your AI video presenter. Here's what I'll sound like in your video.";
+
+  const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">
+  <voice name="${voice}">
+    <prosody rate="0.95" pitch="-2%">${sampleText}</prosody>
+  </voice>
+</speak>`;
+
+  try {
+    const ttsUrl = `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
+    const response = await axios.post(ttsUrl, ssml, {
+      headers: {
+        "Ocp-Apim-Subscription-Key": key,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "audio-16khz-128kbitrate-mono-mp3",
+      },
+      responseType: "arraybuffer",
+    });
+
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(response.data);
+  } catch (err) {
+    req.log.error({ err }, "Voice preview failed");
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: `Voice preview failed: ${msg}` });
+  }
 });
 
 export default router;

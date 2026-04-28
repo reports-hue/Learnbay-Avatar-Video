@@ -8,6 +8,14 @@ import { v4 as uuidv4 } from "uuid";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const outputsDir = path.resolve(__dirname, "../outputs");
 
+export type PacingRate = "slow" | "natural" | "fast";
+
+const PACING_VALUES: Record<PacingRate, string> = {
+  slow: "0.88",
+  natural: "0.95",
+  fast: "1.05",
+};
+
 export interface AvatarJobConfig {
   script: string;
   character: string;
@@ -16,6 +24,8 @@ export interface AvatarJobConfig {
   voiceStyle?: string;
   backgroundColor: string;
   bgImageUrl?: string;
+  pacing?: PacingRate;
+  realism?: boolean;
 }
 
 // Supported SSML speaking styles per Azure TTS voice
@@ -25,26 +35,59 @@ const VOICE_STYLES: Record<string, string[]> = {
   "en-US-GuyNeural": ["narration-professional", "newscast"],
   "en-US-DavisNeural": ["chat", "cheerful", "excited", "friendly", "hopeful", "angry"],
   "en-GB-SoniaNeural": ["cheerful", "sad"],
+  "en-US-AvaMultilingualNeural": ["chat", "cheerful", "excited"],
+  "en-US-AndrewMultilingualNeural": ["chat", "excited"],
 };
 
-function buildSsml(script: string, voice: string, voiceStyle?: string): string {
-  const safeScript = script
+export { VOICE_STYLES };
+
+// Split text into sentences for natural pause insertion
+function splitSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// Escape XML special characters
+function xmlEscape(s: string): string {
+  return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
 
-  const styles = VOICE_STYLES[voice];
-  const useStyle = voiceStyle && styles?.includes(voiceStyle);
+// Insert natural breathing pauses (break after commas, between sentences)
+function addBreaks(sentence: string): string {
+  // Add short break after commas
+  return xmlEscape(sentence).replace(/,/g, ",<break time=\"150ms\"/>");
+}
 
-  const inner = useStyle
-    ? `<mstts:express-as style="${voiceStyle}" styledegree="1.3">${safeScript}</mstts:express-as>`
-    : safeScript;
+function buildSsml(
+  script: string,
+  voice: string,
+  voiceStyle?: string,
+  pacing: PacingRate = "natural"
+): string {
+  const rate = PACING_VALUES[pacing];
+  const sentences = splitSentences(script);
+  const styles = VOICE_STYLES[voice] ?? [];
+  const effectiveStyle = voiceStyle && styles.includes(voiceStyle) ? voiceStyle : (styles.includes("chat") ? "chat" : null);
+
+  // Build sentence-level content with breathing pauses between
+  const sentenceXml = sentences
+    .map((s) => `${addBreaks(s)}<break time="300ms"/>`)
+    .join("\n    ");
+
+  const prosodyContent = `<prosody rate="${rate}" pitch="-2%"><mstts:silence type="Sentenceboundary" value="200ms"/>\n    ${sentenceXml}\n  </prosody>`;
+
+  const inner = effectiveStyle
+    ? `<mstts:express-as style="${effectiveStyle}" styledegree="1.2">${prosodyContent}</mstts:express-as>`
+    : prosodyContent;
 
   return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US"><voice name="${voice}">${inner}</voice></speak>`;
 }
-
-export { VOICE_STYLES };
 
 export async function generateAvatarVideo(config: AvatarJobConfig): Promise<string> {
   const region = process.env.AZURE_SPEECH_REGION ?? "eastus";
@@ -53,39 +96,31 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
 
   const baseUrl = `https://${region}.api.cognitive.microsoft.com/avatar/batchsyntheses/${jobId}?api-version=2024-04-15-preview`;
 
-  const useSSML = !!(config.voiceStyle && VOICE_STYLES[config.voice]?.includes(config.voiceStyle));
+  // In realism mode: use green screen background for chroma key compositing
+  const effectiveBgColor = config.realism !== false ? "#00FF00FF" : config.backgroundColor;
 
   const avatarConfig: Record<string, unknown> = {
     customized: false,
-    talkingAvatarCharacter: config.character,
-    talkingAvatarStyle: config.style,
+    talkingAvatarCharacter: config.character || "lisa",
+    talkingAvatarStyle: config.style || "graceful-sitting",
     videoFormat: "mp4",
     videoCodec: "h264",
-    backgroundColor: config.backgroundColor,
+    backgroundColor: config.bgImageUrl ? "#000000FF" : effectiveBgColor,
   };
 
   if (config.bgImageUrl) {
-    avatarConfig["backgroundImage"] = {
-      url: config.bgImageUrl,
-      fileName: "background.jpg",
-    };
+    avatarConfig["backgroundImage"] = { url: config.bgImageUrl, fileName: "background.jpg" };
   }
 
+  // Always use SSML for maximum realism
+  const ssml = buildSsml(config.script, config.voice, config.voiceStyle, config.pacing ?? "natural");
   const requestBody: Record<string, unknown> = {
     avatarConfig,
+    inputKind: "SSML",
+    inputs: [{ content: ssml }],
   };
 
-  if (useSSML) {
-    requestBody["inputKind"] = "SSML";
-    requestBody["inputs"] = [{ content: buildSsml(config.script, config.voice, config.voiceStyle) }];
-    logger.info({ voice: config.voice, voiceStyle: config.voiceStyle }, "Using SSML with emotion style");
-  } else {
-    requestBody["synthesisConfig"] = { voice: config.voice };
-    requestBody["inputKind"] = "PlainText";
-    requestBody["inputs"] = [{ content: config.script }];
-  }
-
-  logger.info({ jobId, character: config.character, style: config.style, voice: config.voice, useSSML }, "Submitting avatar synthesis job");
+  logger.info({ jobId, character: config.character, style: config.style, voice: config.voice, pacing: config.pacing, realism: config.realism !== false, bgColor: effectiveBgColor }, "Submitting avatar synthesis job");
 
   await axios.put(baseUrl, requestBody, {
     headers: {

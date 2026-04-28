@@ -47,6 +47,7 @@ export interface VideoEntry {
   voice: string;
   avatar: string;
   videoUrl: string;
+  thumbnailUrl?: string;
   script: string;
   brandTheme: { bgColor1: string; bgColor2: string; accentColor: string };
   createdAt: string;

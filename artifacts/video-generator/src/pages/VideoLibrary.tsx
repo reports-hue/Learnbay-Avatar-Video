@@ -111,19 +111,33 @@ function VideoCard({ video, confirmDelete, onDelete }: {
   confirmDelete: string | null;
   onDelete: () => void;
 }) {
-  const [videoError, setVideoError] = useState(false);
+  const [mediaError, setMediaError] = useState(false);
 
   return (
     <div className="bg-white border border-border rounded-xl overflow-hidden group hover:border-primary/30 hover:shadow-sm transition-all">
       {/* Thumbnail / preview */}
       <div className="aspect-video bg-gray-100 relative overflow-hidden">
-        {!videoError ? (
+        {!mediaError && video.thumbnailUrl ? (
+          <div className="w-full h-full relative">
+            <img
+              src={video.thumbnailUrl}
+              alt={video.topic}
+              className="w-full h-full object-cover"
+              onError={() => setMediaError(true)}
+            />
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20">
+              <div className="w-10 h-10 rounded-full bg-black/50 flex items-center justify-center">
+                <Film className="w-5 h-5 text-white" />
+              </div>
+            </div>
+          </div>
+        ) : !mediaError ? (
           <video
             src={video.videoUrl}
             className="w-full h-full object-cover"
             preload="metadata"
             muted
-            onError={() => setVideoError(true)}
+            onError={() => setMediaError(true)}
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
