@@ -3,36 +3,65 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
 import { generateScript } from "../services/openai.js";
-import { generateVoice } from "../services/speech.js";
-import { generateSRT } from "../utils/srtGenerator.js";
-import { processVideo } from "../services/ffmpegService.js";
+import { generateAvatarVideo, type AvatarJobConfig } from "../services/avatarService.js";
+import { postProcessAvatarVideo } from "../services/ffmpegService.js";
 
 const router: IRouter = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const outputsDir = path.resolve(__dirname, "../outputs");
 
+export interface GenerateRequest {
+  topic?: string;
+  platform?: string;
+  avatar?: string;
+  avatarStyle?: string;
+  voice?: string;
+  backgroundColor?: string;
+  bgImageUrl?: string;
+  logoUrl?: string;
+  primaryColor?: string;
+}
+
 router.post("/generate", async (req: Request, res: Response) => {
-  const { topic, platform } = req.body as { topic?: string; platform?: string };
+  const {
+    topic,
+    platform,
+    avatar = "lisa",
+    avatarStyle = "graceful-sitting",
+    voice = "en-US-AvaMultilingualNeural",
+    backgroundColor = "#FFFFFFFF",
+    bgImageUrl,
+    logoUrl,
+    primaryColor,
+  } = req.body as GenerateRequest;
 
   if (!topic || !platform) {
     res.status(400).json({ error: "topic and platform are required" });
     return;
   }
 
-  req.log.info({ topic, platform }, "Starting video generation");
+  req.log.info({ topic, platform, avatar, avatarStyle, voice }, "Starting avatar video generation");
 
   try {
     req.log.info("Step 1: Generating script");
     const script = await generateScript(topic, platform);
 
-    req.log.info("Step 2: Generating voice");
-    await generateVoice(script);
+    req.log.info("Step 2: Generating avatar video via Azure");
+    const avatarConfig: AvatarJobConfig = {
+      script,
+      character: avatar,
+      style: avatarStyle,
+      voice,
+      backgroundColor,
+      bgImageUrl: bgImageUrl || undefined,
+    };
+    const avatarVideoPath = await generateAvatarVideo(avatarConfig);
 
-    req.log.info("Step 3: Generating subtitles");
-    await generateSRT(script);
-
-    req.log.info("Step 4: Processing video with FFmpeg");
-    await processVideo(platform);
+    req.log.info("Step 3: Post-processing (logo, branding)");
+    await postProcessAvatarVideo(avatarVideoPath, {
+      logoUrl: logoUrl || undefined,
+      primaryColor: primaryColor || undefined,
+    });
 
     res.json({
       success: true,
