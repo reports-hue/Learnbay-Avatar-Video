@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { logger } from "../lib/logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const outputsDir = path.resolve(__dirname, "../../outputs");
+const outputsDir = path.resolve(__dirname, "../outputs");
 
 export async function generateVoice(script: string): Promise<string> {
   const outputPath = path.join(outputsDir, "voice.mp3");

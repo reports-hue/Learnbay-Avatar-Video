@@ -4,7 +4,7 @@ import fs from "fs/promises";
 import { logger } from "../lib/logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const outputsDir = path.resolve(__dirname, "../../outputs");
+const outputsDir = path.resolve(__dirname, "../outputs");
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);

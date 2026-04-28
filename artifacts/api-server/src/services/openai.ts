@@ -3,7 +3,7 @@ import { logger } from "../lib/logger.js";
 
 const endpoint = process.env.AZURE_OPENAI_ENDPOINT ?? "";
 const apiKey = process.env.AZURE_OPENAI_API_KEY ?? "";
-const deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4o";
+const deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4o-mini";
 const apiVersion = "2024-12-01-preview";
 
 const client = new OpenAI({

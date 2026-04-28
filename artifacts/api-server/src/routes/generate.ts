@@ -9,7 +9,7 @@ import { processVideo } from "../services/ffmpegService.js";
 
 const router: IRouter = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const outputsDir = path.resolve(__dirname, "../../outputs");
+const outputsDir = path.resolve(__dirname, "../outputs");
 
 router.post("/generate", async (req: Request, res: Response) => {
   const { topic, platform } = req.body as { topic?: string; platform?: string };

@@ -100,6 +100,9 @@ async function buildAll() {
       "puppeteer",
       "puppeteer-core",
       "electron",
+      "ffmpeg-static",
+      "fluent-ffmpeg",
+      "microsoft-cognitiveservices-speech-sdk",
     ],
     sourcemap: "linked",
     plugins: [
