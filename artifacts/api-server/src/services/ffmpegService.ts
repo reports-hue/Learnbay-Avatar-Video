@@ -222,13 +222,14 @@ export interface PostProcessOptions {
   musicPath?: string;
   wordTimings?: WordTiming[];
   captionStyle?: CaptionStyle;
+  outputFilename?: string;
 }
 
 export async function postProcessAvatarVideo(
   avatarVideoPath: string,
   options: PostProcessOptions = {}
 ): Promise<string> {
-  const outputPath = path.join(outputsDir, "final.mp4");
+  const outputPath = path.join(outputsDir, options.outputFilename ?? "final.mp4");
   const duration = await getDuration(avatarVideoPath);
   const isVertical = VERTICAL_PLATFORMS.has(options.platform ?? "");
 

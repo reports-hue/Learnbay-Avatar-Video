@@ -69,6 +69,83 @@ Return ONLY valid JSON: {"bgColor1":"#0D1B2A","bgColor2":"#1A3A5C","accentColor"
   }
 }
 
+export interface BrandAnalysisResult {
+  companyName: string;
+  tagline: string;
+  description: string;
+  logoUrl: string;
+  primaryColor: string;
+  secondaryColor: string;
+  tone: string;
+  suggestedCta: string;
+}
+
+export async function analyzeBrand(
+  html: string,
+  url: string,
+  metaInfo: Record<string, string>
+): Promise<BrandAnalysisResult> {
+  const textContent = html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 2500);
+
+  const metaSummary = Object.entries(metaInfo)
+    .slice(0, 15)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+
+  const prompt = `You are a brand analyst. Analyze this website data and extract brand identity.
+
+URL: ${url}
+Meta tags:
+${metaSummary}
+
+Page text snippet:
+${textContent.slice(0, 1200)}
+
+Return ONLY valid JSON (no code blocks) with these exact keys:
+{
+  "companyName": "the main brand/company name",
+  "tagline": "their tagline or slogan (empty string if unknown)",
+  "description": "1-2 sentence brand description for AI video context",
+  "logoUrl": "use detected_logo_url from meta or empty string",
+  "primaryColor": "dominant brand color as #RRGGBB hex (extract from theme-color or infer from brand)",
+  "secondaryColor": "secondary/accent color as #RRGGBB hex",
+  "tone": "one of: professional, casual, energetic, trustworthy, creative",
+  "suggestedCta": "natural video CTA e.g. 'Visit acme.com today'"
+}`;
+
+  const response = await client.chat.completions.create({
+    model: deploymentName,
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 250,
+    temperature: 0.3,
+  });
+
+  const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
+  try {
+    const result = JSON.parse(raw.replace(/```json\n?|```/g, "")) as BrandAnalysisResult;
+    logger.info({ companyName: result.companyName, primaryColor: result.primaryColor }, "Brand analyzed");
+    return {
+      companyName: result.companyName ?? "",
+      tagline: result.tagline ?? "",
+      description: result.description ?? "",
+      logoUrl: metaInfo["detected_logo_url"] ?? result.logoUrl ?? "",
+      primaryColor: /^#[0-9a-fA-F]{6}$/.test(result.primaryColor ?? "") ? result.primaryColor : "#7C3AED",
+      secondaryColor: /^#[0-9a-fA-F]{6}$/.test(result.secondaryColor ?? "") ? result.secondaryColor : "#4A9FFF",
+      tone: result.tone ?? "professional",
+      suggestedCta: result.suggestedCta ?? "",
+    };
+  } catch {
+    logger.warn({ raw }, "Failed to parse brand analysis, returning defaults");
+    return { companyName: "", tagline: "", description: "", logoUrl: "", primaryColor: "#7C3AED", secondaryColor: "#4A9FFF", tone: "professional", suggestedCta: "" };
+  }
+}
+
 export async function generateScript(topic: string, platform: string, style: ScriptStyle = "viral"): Promise<string> {
   const duration = DURATIONS[platform] ?? "20-30 seconds";
   const styleGuide = STYLE_PROMPTS[style];

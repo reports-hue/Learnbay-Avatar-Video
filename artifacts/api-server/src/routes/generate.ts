@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
+import { v4 as uuidv4 } from "uuid";
 import { generateScript, generateBrandTheme, type ScriptStyle } from "../services/openai.js";
 import { generateAvatarVideo, type AvatarJobConfig } from "../services/avatarService.js";
 import { postProcessAvatarVideo, type CaptionStyle } from "../services/ffmpegService.js";
@@ -67,7 +68,8 @@ router.post("/generate", async (req: Request, res: Response) => {
     }
   }
 
-  req.log.info({ topic, platform, avatar, voice, scriptStyle, captionStyle, autoBackground }, "Starting video generation");
+  const videoId = uuidv4().replace(/-/g, "").slice(0, 12);
+  req.log.info({ topic, platform, avatar, voice, scriptStyle, captionStyle, autoBackground, videoId }, "Starting video generation");
 
   try {
     // Step 1: Script + brand theme (parallel)
@@ -119,6 +121,7 @@ router.post("/generate", async (req: Request, res: Response) => {
     send("progress", { step: "avatar_done", percent: 75, message: "Avatar rendered. Applying cinematic effects…" });
 
     // Step 4: Post-process
+    const outputFilename = `video_${videoId}.mp4`;
     await postProcessAvatarVideo(avatarVideoPath, {
       platform,
       logoUrl: logoUrl || undefined,
@@ -128,13 +131,15 @@ router.post("/generate", async (req: Request, res: Response) => {
       cta: cta || undefined,
       wordTimings: wordTimings.length > 0 ? wordTimings : undefined,
       captionStyle,
+      outputFilename,
     });
 
     send("progress", { step: "done", percent: 100, message: "Your video is ready!" });
     send("done", {
       success: true,
+      videoId,
       script,
-      videoUrl: "/api/video/final.mp4",
+      videoUrl: `/api/video/${outputFilename}`,
       brandTheme: {
         bgColor1: resolvedBgColor1,
         bgColor2: resolvedBgColor2 ?? resolvedBgColor1,

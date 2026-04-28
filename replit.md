@@ -32,6 +32,17 @@ artifacts/
   video-generator/ React + Vite frontend (port 24396 → proxied via api-server)
 ```
 
+### Frontend Pages (video-generator)
+
+- `src/App.tsx` — SaaS layout shell: shadcn Sidebar (collapsible icon/full), top breadcrumb bar, route switching
+- `src/pages/Dashboard.tsx` — Stats (total videos, this week, brand status), brand setup CTA, quick create card, recent 4 videos grid
+- `src/pages/CreateVideo.tsx` — 4-step form: Content→Brand→Avatar→Generate with SSE progress, live script preview, color phase pills, result video player + download
+- `src/pages/VideoLibrary.tsx` — Searchable video card grid, inline video preview, download, confirm-delete
+- `src/pages/BrandSettings.tsx` — AI website analyzer (POST /api/analyze-brand), company identity, visual identity (logo, 3 colors, color strip preview), default video settings
+- `src/lib/storage.ts` — `useBrandProfile`, `useVideoLibrary` hooks (localStorage-backed)
+- `src/lib/types.ts` — `BrandProfile`, `VideoEntry`, `BrandAnalysisResult`, `Page`
+- `src/lib/config.ts` — `PLATFORMS`, `SCRIPT_STYLES`, `AVATARS`, `VOICES`, `VOICE_STYLES`, `CAPTION_STYLES`, `SCENE_PRESETS`
+
 ### Features
 
 | Feature | Details |
