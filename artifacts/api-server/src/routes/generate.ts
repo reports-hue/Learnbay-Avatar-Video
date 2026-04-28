@@ -37,6 +37,7 @@ export interface GenerateRequest {
   autoBackground?: boolean;
   realism?: boolean;
   pacing?: PacingRate;
+  customPhotoUrl?: string;
 }
 
 // ─── Video generation (SSE) ─────────────────────────────────────

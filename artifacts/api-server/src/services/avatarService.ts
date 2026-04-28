@@ -37,9 +37,19 @@ const VOICE_STYLES: Record<string, string[]> = {
   "en-GB-SoniaNeural": ["cheerful", "sad"],
   "en-US-AvaMultilingualNeural": ["chat", "cheerful", "excited"],
   "en-US-AndrewMultilingualNeural": ["chat", "excited"],
+  "en-US-AndrewNeural": ["chat", "excited", "friendly"],
+  "en-US-EmmaNeural": ["chat", "cheerful", "excited"],
+  "en-US-BrianNeural": ["chat", "friendly"],
 };
 
 export { VOICE_STYLES };
+
+// Extract locale from voice short name (e.g. hi-IN-SwaraNeural → hi-IN)
+function extractLocale(voice: string): string {
+  const parts = voice.split("-");
+  if (parts.length >= 2) return `${parts[0]}-${parts[1]}`;
+  return "en-US";
+}
 
 // Split text into sentences for natural pause insertion
 function splitSentences(text: string): string[] {
@@ -58,10 +68,9 @@ function xmlEscape(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Insert natural breathing pauses (break after commas, between sentences)
+// Add natural breaks for commas (shorter = less avatar head reset)
 function addBreaks(sentence: string): string {
-  // Add short break after commas
-  return xmlEscape(sentence).replace(/,/g, ",<break time=\"150ms\"/>");
+  return xmlEscape(sentence).replace(/,/g, ",<break time=\"80ms\"/>");
 }
 
 function buildSsml(
@@ -71,22 +80,32 @@ function buildSsml(
   pacing: PacingRate = "natural"
 ): string {
   const rate = PACING_VALUES[pacing];
+  const lang = extractLocale(voice);
   const sentences = splitSentences(script);
   const styles = VOICE_STYLES[voice] ?? [];
   const effectiveStyle = voiceStyle && styles.includes(voiceStyle) ? voiceStyle : (styles.includes("chat") ? "chat" : null);
 
-  // Build sentence-level content with breathing pauses between
+  // Build sentence-level content — NO explicit breaks between sentences.
+  // Rely on the TTS engine's natural sentence rhythm + short boundary silence.
+  // This prevents the avatar from hitting a "dead" pause and resetting head position.
   const sentenceXml = sentences
-    .map((s) => `${addBreaks(s)}<break time="300ms"/>`)
-    .join("\n    ");
+    .map((s, i) => {
+      // Slight micro-rate variation between sentences for natural cadence
+      const microRate = i % 2 === 0 ? +parseFloat(rate) - 0.02 : +parseFloat(rate) + 0.02;
+      return `<prosody rate="${microRate.toFixed(2)}">${addBreaks(s)}</prosody>`;
+    })
+    .join(" ");
 
-  const prosodyContent = `<prosody rate="${rate}" pitch="-2%"><mstts:silence type="Sentenceboundary" value="200ms"/>\n    ${sentenceXml}\n  </prosody>`;
+  // Wrap all in one parent prosody block with minimal sentence boundary silence
+  const prosodyContent = `<prosody pitch="-2%"><mstts:silence type="Sentenceboundary" value="80ms"/>${sentenceXml}</prosody>`;
 
-  const inner = effectiveStyle
-    ? `<mstts:express-as style="${effectiveStyle}" styledegree="1.2">${prosodyContent}</mstts:express-as>`
+  // Only add express-as if voice supports it (mainly English Neural voices)
+  const supportsStyle = styles.length > 0;
+  const inner = effectiveStyle && supportsStyle
+    ? `<mstts:express-as style="${effectiveStyle}" styledegree="1.1">${prosodyContent}</mstts:express-as>`
     : prosodyContent;
 
-  return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US"><voice name="${voice}">${inner}</voice></speak>`;
+  return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="${lang}"><voice name="${voice}">${inner}</voice></speak>`;
 }
 
 export async function generateAvatarVideo(config: AvatarJobConfig): Promise<string> {
@@ -106,13 +125,16 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
     videoFormat: "mp4",
     videoCodec: "h264",
     backgroundColor: config.bgImageUrl ? "#000000FF" : effectiveBgColor,
+    bitrateKbps: 4000,
+    subtitleType: "none",
+    gestureEnabled: true,
   };
 
   if (config.bgImageUrl) {
     avatarConfig["backgroundImage"] = { url: config.bgImageUrl, fileName: "background.jpg" };
   }
 
-  // Always use SSML for maximum realism
+  // Always use SSML for maximum realism with smooth head movement
   const ssml = buildSsml(config.script, config.voice, config.voiceStyle, config.pacing ?? "natural");
   const requestBody: Record<string, unknown> = {
     avatarConfig,

@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -6,14 +6,25 @@ import {
   ChevronLeft, ChevronRight, Sparkles, Check, Download,
   Library, RotateCcw, Building2, AlertCircle,
   Volume2, VolumeX, Play, Loader2, Zap, Gauge,
+  Search, X, Upload, Camera, Globe, Mic2,
 } from "lucide-react";
 import type { BrandProfile, VideoEntry, Page } from "@/lib/types";
-import { PLATFORMS, SCRIPT_STYLES, AVATARS, VOICES, VOICE_STYLES, CAPTION_STYLES, SCENE_PRESETS } from "@/lib/config";
+import { PLATFORMS, SCRIPT_STYLES, AVATARS, QUICK_VOICES, VOICE_STYLES, CAPTION_STYLES, SCENE_PRESETS } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
 // ─── Types ──────────────────────────────────────────────────────
 type Pacing = "slow" | "natural" | "fast";
 interface ProgressState { step: string; percent: number; message: string }
+interface VoiceEntry {
+  value: string;
+  label: string;
+  locale: string;
+  localeName: string;
+  gender: "Male" | "Female";
+  isHD: boolean;
+  isMultilingual: boolean;
+  styles: string[];
+}
 interface BrandTheme { bgColor1: string; bgColor2: string; accentColor: string }
 interface GenerationResult {
   videoId: string; videoUrl: string; thumbnailUrl?: string;
@@ -94,6 +105,157 @@ function StepBar({ step }: { step: number }) {
   );
 }
 
+// ─── Voice Browser Modal ─────────────────────────────────────────
+interface VBMProps {
+  voices: VoiceEntry[] | null;
+  loading: boolean;
+  selected: string;
+  search: string; onSearchChange: (v: string) => void;
+  gender: "all" | "Female" | "Male"; onGenderChange: (v: "all" | "Female" | "Male") => void;
+  locale: string; onLocaleChange: (v: string) => void;
+  hdOnly: boolean; onHdOnlyChange: (v: boolean) => void;
+  onSelect: (v: string) => void;
+  onClose: () => void;
+  onPreview: (v: string) => void;
+  isPreviewing: boolean;
+}
+
+function VoiceBrowserModal({ voices, loading, selected, search, onSearchChange, gender, onGenderChange, locale, onLocaleChange, hdOnly, onHdOnlyChange, onSelect, onClose, onPreview, isPreviewing }: VBMProps) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  const locales = voices ? [...new Set(voices.map(v => v.locale))].sort() : [];
+
+  const filtered = (voices ?? []).filter(v => {
+    if (gender !== "all" && v.gender !== gender) return false;
+    if (locale && v.locale !== locale) return false;
+    if (hdOnly && !v.isHD) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return v.label.toLowerCase().includes(q) || v.localeName.toLowerCase().includes(q) || v.locale.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  // Group by locale
+  const grouped: Record<string, VoiceEntry[]> = {};
+  filtered.forEach(v => {
+    if (!grouped[v.locale]) grouped[v.locale] = [];
+    grouped[v.locale].push(v);
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[90vh] sm:max-h-[80vh]" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center gap-3 p-4 border-b border-border flex-shrink-0">
+          <Globe className="w-5 h-5 text-primary" />
+          <div className="flex-1">
+            <h2 className="text-sm font-bold text-foreground">Voice Browser</h2>
+            <p className="text-[11px] text-muted-foreground">{voices ? `${voices.length} voices across ${locales.length} languages` : "Loading…"}</p>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center">
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        {/* Filters */}
+        <div className="px-4 py-3 border-b border-border flex flex-col gap-2 flex-shrink-0">
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text" value={search} onChange={e => onSearchChange(e.target.value)}
+              placeholder="Search by name, language or locale…"
+              className="w-full pl-8 pr-3 py-2 text-xs border border-border rounded-lg bg-gray-50 focus:outline-none focus:border-primary"
+            />
+            {search && <button onClick={() => onSearchChange("")} className="absolute right-2.5 top-1/2 -translate-y-1/2"><X className="w-3 h-3 text-muted-foreground" /></button>}
+          </div>
+          {/* Filter row */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {(["all", "Female", "Male"] as const).map(g => (
+              <button key={g} onClick={() => onGenderChange(g)}
+                className={cn("px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all",
+                  gender === g ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
+                )}
+              >{g === "all" ? "All genders" : g}</button>
+            ))}
+            <button onClick={() => onHdOnlyChange(!hdOnly)}
+              className={cn("px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all",
+                hdOnly ? "border-violet-500 bg-violet-50 text-violet-700" : "border-border bg-white text-muted-foreground hover:border-primary/40"
+              )}
+            >HD voices only</button>
+            <select value={locale} onChange={e => onLocaleChange(e.target.value)}
+              className="ml-auto text-[11px] border border-border rounded-lg px-2 py-1 bg-white text-muted-foreground focus:outline-none focus:border-primary max-w-[160px]"
+            >
+              <option value="">All languages</option>
+              {locales.map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Voice list */}
+        <div className="overflow-y-auto flex-1 p-4 space-y-4">
+          {loading && (
+            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading 600+ voices…
+            </div>
+          )}
+          {!loading && Object.keys(grouped).length === 0 && (
+            <div className="text-center py-12 text-sm text-muted-foreground">No voices match your filters</div>
+          )}
+          {!loading && Object.entries(grouped).map(([loc, vs]) => (
+            <div key={loc}>
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                {vs[0].localeName} <span className="opacity-50">· {loc} · {vs.length} voice{vs.length !== 1 ? "s" : ""}</span>
+              </p>
+              <div className="space-y-1">
+                {vs.map(v => (
+                  <div key={v.value}
+                    className={cn(
+                      "flex items-center gap-3 px-3 py-2 rounded-lg border text-xs transition-all cursor-pointer hover:border-primary/40",
+                      selected === v.value ? "border-primary bg-violet-50" : "border-transparent hover:bg-gray-50"
+                    )}
+                    onClick={() => onSelect(v.value)}
+                  >
+                    <div className={cn(
+                      "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0",
+                      v.gender === "Female" ? "bg-pink-100 text-pink-600" : "bg-blue-100 text-blue-600"
+                    )}>
+                      {v.gender === "Female" ? "F" : "M"}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium text-foreground">{v.label}</span>
+                      {v.isMultilingual && <span className="ml-1.5 text-[9px] text-violet-500 bg-violet-50 px-1 rounded">Multilingual</span>}
+                    </div>
+                    {v.isHD && <Badge variant="secondary" className="text-[9px] bg-violet-100 text-violet-700 border-0 py-0 h-4">HD</Badge>}
+                    {selected === v.value && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                    <button
+                      onClick={e => { e.stopPropagation(); onPreview(v.value); }}
+                      disabled={isPreviewing}
+                      className="p-1 rounded hover:bg-white text-muted-foreground hover:text-primary transition-colors flex-shrink-0 disabled:opacity-30"
+                    >
+                      <Play className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-border flex-shrink-0">
+          <Button size="sm" variant="outline" className="w-full" onClick={onClose}>Done</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main ────────────────────────────────────────────────────────
 interface Props {
   brand: BrandProfile;
@@ -136,6 +298,21 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Voice browser modal
+  const [showVoiceBrowser, setShowVoiceBrowser] = useState(false);
+  const [allVoices, setAllVoices] = useState<VoiceEntry[] | null>(null);
+  const [loadingVoices, setLoadingVoices] = useState(false);
+  const [voiceSearch, setVoiceSearch] = useState("");
+  const [voiceGender, setVoiceGender] = useState<"all" | "Female" | "Male">("all");
+  const [voiceLocale, setVoiceLocale] = useState("");
+  const [voiceHdOnly, setVoiceHdOnly] = useState(false);
+
+  // Custom photo upload (presenter badge in video)
+  const [customPhotoUrl, setCustomPhotoUrl] = useState<string | null>(null);
+  const [customPhotoPreview, setCustomPhotoPreview] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+
   // Generation state
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<ProgressState | null>(null);
@@ -169,6 +346,45 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       audioRef.current.src = "";
       audioRef.current = null;
     }
+  }
+
+  async function fetchAllVoices() {
+    if (allVoices) { setShowVoiceBrowser(true); return; }
+    setShowVoiceBrowser(true);
+    setLoadingVoices(true);
+    try {
+      const res = await fetch("/api/voices");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as VoiceEntry[];
+      setAllVoices(data);
+    } catch {
+      // fallback to quick voices on error
+    } finally {
+      setLoadingVoices(false);
+    }
+  }
+
+  async function handlePhotoUpload(file: File) {
+    setUploadingPhoto(true);
+    setCustomPhotoPreview(URL.createObjectURL(file));
+    try {
+      const fd = new FormData();
+      fd.append("photo", file);
+      const res = await fetch("/api/upload-photo", { method: "POST", body: fd });
+      const data = await res.json() as { photoUrl?: string; error?: string };
+      if (!res.ok || !data.photoUrl) throw new Error(data.error ?? "Upload failed");
+      setCustomPhotoUrl(data.photoUrl);
+    } catch {
+      setCustomPhotoUrl(null);
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
+
+  function clearPhoto() {
+    setCustomPhotoUrl(null);
+    setCustomPhotoPreview(null);
+    if (photoInputRef.current) photoInputRef.current.value = "";
   }
 
   async function previewVoice() {
@@ -206,6 +422,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       captionStyle,
       realism,
       pacing,
+      customPhotoUrl: customPhotoUrl || undefined,
     };
 
     if (brandMode === "saved" && hasBrand) {
@@ -525,25 +742,56 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       {/* ──────────────────────────────────── STEP 3 — Avatar & Voice */}
       {step === 3 && (
         <div className="space-y-6">
-          {/* Character */}
+
+          {/* ── Character Cards ── */}
           <div>
             <SLabel>Character</SLabel>
             <div className="grid grid-cols-5 gap-2">
-              {Object.entries(AVATARS).map(([key, { label, emoji }]) => (
+              {Object.entries(AVATARS).map(([key, char]) => (
                 <button key={key} onClick={() => handleAvatarChange(key)}
                   className={cn(
-                    "flex flex-col items-center gap-1.5 py-3 rounded-lg border text-xs font-medium transition-all",
-                    avatar === key ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
+                    "relative flex flex-col items-center gap-2 py-3 px-1 rounded-xl border-2 text-xs font-medium transition-all overflow-hidden",
+                    avatar === key ? "border-primary shadow-md" : "border-border hover:border-primary/40"
                   )}
                 >
-                  <span className="text-xl">{emoji}</span>
-                  <span>{label}</span>
+                  {/* Gradient background */}
+                  <div
+                    className="absolute inset-0 opacity-90"
+                    style={{ background: `linear-gradient(135deg, ${char.gradient[0]}, ${char.gradient[1]})` }}
+                  />
+                  {/* Content */}
+                  <div className="relative z-10 flex flex-col items-center gap-1.5">
+                    <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center border border-white/30">
+                      <span className="text-xl text-white font-bold">{char.label[0]}</span>
+                    </div>
+                    <span className="text-white font-semibold text-[11px]">{char.label}</span>
+                    <span className={cn(
+                      "text-[9px] px-1.5 py-0.5 rounded-full font-medium",
+                      char.gender === "F" ? "bg-pink-400/80 text-white" : "bg-blue-400/80 text-white"
+                    )}>
+                      {char.gender === "F" ? "Female" : "Male"}
+                    </span>
+                  </div>
+                  {/* Selected ring */}
+                  {avatar === key && (
+                    <div className="absolute top-1.5 right-1.5 z-10 w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5 text-white" />
+                    </div>
+                  )}
                 </button>
               ))}
             </div>
+            {/* Character description + style count */}
+            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{AVATARS[avatar]?.label}</span>
+              <span>·</span>
+              <span>{AVATARS[avatar]?.desc}</span>
+              <span>·</span>
+              <span>{AVATARS[avatar]?.styles.length} styles</span>
+            </div>
           </div>
 
-          {/* Avatar Style */}
+          {/* ── Avatar Style ── */}
           <div>
             <SLabel>Avatar Style</SLabel>
             <div className="flex flex-wrap gap-2">
@@ -555,51 +803,136 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             </div>
           </div>
 
-          {/* Voice + Voice Preview */}
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <SLabel>Voice</SLabel>
-                <select value={voice} onChange={(e) => handleVoiceChange(e.target.value)} className="input cursor-pointer text-xs">
-                  {VOICES.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
-                </select>
+          {/* ── Custom Photo Badge ── */}
+          <div>
+            <SLabel>Presenter Photo Badge <span className="text-muted-foreground font-normal ml-1">(optional)</span></SLabel>
+            <div className="flex items-center gap-3">
+              {customPhotoPreview ? (
+                <div className="relative">
+                  <img src={customPhotoPreview} alt="Photo badge" className="w-14 h-14 rounded-xl object-cover border-2 border-primary shadow-sm" />
+                  {uploadingPhoto && (
+                    <div className="absolute inset-0 rounded-xl bg-black/40 flex items-center justify-center">
+                      <Loader2 className="w-4 h-4 text-white animate-spin" />
+                    </div>
+                  )}
+                  {!uploadingPhoto && (
+                    <button onClick={clearPhoto} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 flex items-center justify-center text-white">
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="w-14 h-14 rounded-xl border-2 border-dashed border-border bg-gray-50 flex items-center justify-center">
+                  <Camera className="w-5 h-5 text-muted-foreground" />
+                </div>
+              )}
+              <div className="flex-1">
+                <Button size="sm" variant="outline" className="gap-2 text-xs"
+                  onClick={() => photoInputRef.current?.click()}
+                  disabled={uploadingPhoto}
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  {customPhotoPreview ? "Change photo" : "Upload your photo"}
+                </Button>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Your photo appears as a corner badge in the final video
+                </p>
+                <input ref={photoInputRef} type="file" accept="image/*" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePhotoUpload(f); }}
+                />
               </div>
-              <div className="space-y-1.5">
-                <SLabel>Voice Emotion</SLabel>
-                <select value={voiceStyle} onChange={(e) => setVoiceStyle(e.target.value)} disabled={voiceStyleOptions.length === 0} className="input cursor-pointer text-xs disabled:opacity-40">
-                  <option value="">Default</option>
-                  {voiceStyleOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
+              {customPhotoUrl && !uploadingPhoto && (
+                <span className="text-[10px] text-emerald-600 flex items-center gap-1 flex-shrink-0">
+                  <Check className="w-3 h-3" /> Uploaded
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* ── Voice Browser ── */}
+          <div className="space-y-3">
+            <SLabel>Voice</SLabel>
+
+            {/* Current voice chip + browse button */}
+            <div className="flex items-center gap-3 p-3 bg-gray-50 border border-border rounded-xl">
+              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Mic2 className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground truncate">
+                  {QUICK_VOICES.find(v => v.value === voice)?.label ?? voice.split("-").slice(2).join("-").replace(/Neural$/, "")}
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  {QUICK_VOICES.find(v => v.value === voice)?.desc ?? voice.split("-").slice(0, 2).join("-")}
+                </p>
+              </div>
+              {QUICK_VOICES.find(v => v.value === voice)?.isHD && (
+                <Badge variant="secondary" className="text-[10px] bg-violet-100 text-violet-700 border-0 flex-shrink-0">HD</Badge>
+              )}
+              <Button size="sm" variant="outline" className="gap-1.5 text-xs flex-shrink-0" onClick={fetchAllVoices}>
+                <Globe className="w-3.5 h-3.5" /> Browse all
+              </Button>
+            </div>
+
+            {/* Quick-select popular voices */}
+            <div>
+              <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Popular voices</p>
+              <div className="flex flex-wrap gap-1.5">
+                {QUICK_VOICES.slice(0, 10).map((v) => (
+                  <button key={v.value} onClick={() => handleVoiceChange(v.value)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium transition-all",
+                      voice === v.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
+                    )}
+                  >
+                    {v.label}
+                    <span className="text-[9px] opacity-60">{v.locale}</span>
+                    {v.isHD && <span className="text-[8px] bg-violet-100 text-violet-600 px-1 rounded">HD</span>}
+                  </button>
+                ))}
+                <button onClick={fetchAllVoices}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-dashed border-primary/40 bg-violet-50 text-xs font-medium text-primary transition-all hover:border-primary"
+                >
+                  <Search className="w-3 h-3" /> 600+ voices
+                </button>
               </div>
             </div>
 
-            {/* Voice Preview button */}
+            {/* Voice Emotion */}
+            {voiceStyleOptions.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Voice Emotion</p>
+                <div className="flex flex-wrap gap-1.5">
+                  <button onClick={() => setVoiceStyle("")}
+                    className={cn("px-2.5 py-1 rounded-full border text-xs font-medium transition-all",
+                      !voiceStyle ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
+                    )}>Default</button>
+                  {voiceStyleOptions.map((s) => (
+                    <button key={s.value} onClick={() => setVoiceStyle(s.value)}
+                      className={cn("px-2.5 py-1 rounded-full border text-xs font-medium transition-all",
+                        voiceStyle === s.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
+                      )}>{s.label}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Voice Preview */}
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={previewVoice} disabled={isPreviewing}
-                className="gap-2 text-xs">
-                {isPreviewing ? (
-                  <><Volume2 className="w-3.5 h-3.5 text-primary animate-pulse" /> Playing…</>
-                ) : (
-                  <><Play className="w-3.5 h-3.5" /> Preview Voice</>
-                )}
+              <Button size="sm" variant="outline" onClick={previewVoice} disabled={isPreviewing} className="gap-2 text-xs">
+                {isPreviewing ? <><Volume2 className="w-3.5 h-3.5 text-primary animate-pulse" /> Playing…</> : <><Play className="w-3.5 h-3.5" /> Preview voice</>}
               </Button>
               {isPreviewing && (
                 <Button size="sm" variant="ghost" onClick={stopPreview} className="gap-1.5 text-xs text-muted-foreground">
                   <VolumeX className="w-3.5 h-3.5" /> Stop
                 </Button>
               )}
-              {previewError && (
-                <span className="text-xs text-red-500 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> {previewError}
-                </span>
-              )}
-              {!previewError && !isPreviewing && (
-                <span className="text-xs text-muted-foreground">Hear a 5-second sample before generating</span>
-              )}
+              {previewError && <span className="text-xs text-red-500 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {previewError}</span>}
+              {!previewError && !isPreviewing && <span className="text-xs text-muted-foreground">Hear a 5-second sample</span>}
             </div>
           </div>
 
-          {/* Caption Style */}
+          {/* ── Caption Style ── */}
           <div>
             <SLabel>Caption Style</SLabel>
             <div className="flex gap-2">
@@ -618,36 +951,25 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             </div>
           </div>
 
-          {/* ── Realism Mode + Pacing (production quality controls) ── */}
+          {/* ── Realism Mode + Pacing ── */}
           <div className="bg-gray-50 border border-border rounded-xl p-4 space-y-4">
             <p className="text-xs font-semibold text-foreground flex items-center gap-2">
               <Zap className="w-3.5 h-3.5 text-primary" /> Generation Settings
             </p>
-
-            {/* Realism Mode toggle */}
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-foreground">Realism Mode</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Chroma key compositing, color grade, film grain, Ken Burns effect, broadcast-quality audio
+                  Chroma key, color grade, film grain, Ken Burns, broadcast audio
                 </p>
               </div>
-              <button
-                onClick={() => setRealism(!realism)}
-                className={cn(
-                  "relative flex-shrink-0 w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none",
-                  realism ? "bg-primary" : "bg-gray-300"
-                )}
+              <button onClick={() => setRealism(!realism)}
+                className={cn("relative flex-shrink-0 w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none", realism ? "bg-primary" : "bg-gray-300")}
                 role="switch" aria-checked={realism}
               >
-                <span className={cn(
-                  "absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200",
-                  realism ? "translate-x-5" : "translate-x-0"
-                )} />
+                <span className={cn("absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200", realism ? "translate-x-5" : "translate-x-0")} />
               </button>
             </div>
-
-            {/* Pacing slider */}
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <Gauge className="w-3.5 h-3.5 text-muted-foreground" />
@@ -659,21 +981,14 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
               <div className="flex gap-1.5">
                 {PACING_OPTIONS.map((p) => (
                   <button key={p.value} onClick={() => setPacing(p.value)}
-                    className={cn(
-                      "flex-1 py-2 rounded-lg border text-xs font-medium transition-all",
+                    className={cn("flex-1 py-2 rounded-lg border text-xs font-medium transition-all",
                       pacing === p.value ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/30"
                     )}
                   >
-                    <div>{p.label}</div>
-                    <div className="text-[10px] opacity-70">{p.desc}</div>
+                    <div>{p.label}</div><div className="text-[10px] opacity-70">{p.desc}</div>
                   </button>
                 ))}
               </div>
-              {!realism && (
-                <p className="text-[11px] text-amber-600 mt-2 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> Pacing only applies in Realism Mode
-                </p>
-              )}
             </div>
           </div>
 
@@ -682,6 +997,38 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             <Button onClick={() => setStep(4)}>Review & Generate <ChevronRight className="w-4 h-4" /></Button>
           </div>
         </div>
+      )}
+
+      {/* ──────────────────── VOICE BROWSER MODAL ──────────────────── */}
+      {showVoiceBrowser && (
+        <VoiceBrowserModal
+          voices={allVoices}
+          loading={loadingVoices}
+          selected={voice}
+          search={voiceSearch} onSearchChange={setVoiceSearch}
+          gender={voiceGender} onGenderChange={setVoiceGender}
+          locale={voiceLocale} onLocaleChange={setVoiceLocale}
+          hdOnly={voiceHdOnly} onHdOnlyChange={setVoiceHdOnly}
+          onSelect={(v) => { handleVoiceChange(v); setShowVoiceBrowser(false); }}
+          onClose={() => setShowVoiceBrowser(false)}
+          onPreview={(v) => {
+            const savedVoice = voice;
+            setVoice(v);
+            stopPreview();
+            setIsPreviewing(true);
+            setPreviewError(null);
+            fetch("/api/preview-voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voice: v }) })
+              .then(r => r.blob()).then(blob => {
+                const url = URL.createObjectURL(blob);
+                const audio = new Audio(url);
+                audioRef.current = audio;
+                audio.onended = () => { setIsPreviewing(false); URL.revokeObjectURL(url); setVoice(savedVoice); };
+                return audio.play();
+              })
+              .catch(() => { setIsPreviewing(false); setVoice(savedVoice); });
+          }}
+          isPreviewing={isPreviewing}
+        />
       )}
 
       {/* ──────────────────────────────────── STEP 4 — Generate */}
@@ -696,7 +1043,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   { label: "Platform", value: platform },
                   { label: "Style", value: SCRIPT_STYLES.find((s) => s.value === scriptStyle)?.label ?? scriptStyle },
                   { label: "Avatar", value: `${AVATARS[avatar]?.label ?? avatar} · ${avatarStyle.replace(/-/g, " ")}` },
-                  { label: "Voice", value: VOICES.find((v) => v.value === voice)?.label.split(" – ")[0] ?? voice },
+                  { label: "Voice", value: QUICK_VOICES.find((v) => v.value === voice)?.label ?? voice.split("-").slice(2).join("-").replace(/Neural$/, "") },
                   { label: "Captions", value: CAPTION_STYLES.find((c) => c.value === captionStyle)?.label ?? captionStyle },
                   { label: "Brand", value: brandMode === "saved" ? brand.companyName : `Custom · ${selectedPreset?.label ?? scenePreset}` },
                   { label: "Quality", value: realism ? `Realism Mode · ${PACING_OPTIONS.find(p => p.value === pacing)?.label} pace` : "Draft Mode" },

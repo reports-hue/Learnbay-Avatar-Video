@@ -8,7 +8,7 @@ import {
   Check, Loader2, Link2,
 } from "lucide-react";
 import type { BrandProfile, BrandAnalysisResult } from "@/lib/types";
-import { VOICES, VOICE_STYLES, AVATARS, SCRIPT_STYLES, CAPTION_STYLES, SCENE_PRESETS } from "@/lib/config";
+import { QUICK_VOICES, VOICE_STYLES, AVATARS, SCRIPT_STYLES, CAPTION_STYLES, SCENE_PRESETS } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -276,7 +276,7 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
             <Field label="Default Voice">
               <select value={form.defaultVoice} onChange={(e) => { setF("defaultVoice", e.target.value); setF("defaultVoiceStyle", ""); }}
                 className="input cursor-pointer text-xs">
-                {VOICES.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
+                {QUICK_VOICES.map((v) => <option key={v.value} value={v.value}>{v.label} — {v.desc}</option>)}
               </select>
             </Field>
             <Field label="Voice Emotion">
@@ -295,15 +295,18 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
 
           <Field label="Default Avatar">
             <div className="grid grid-cols-5 gap-2">
-              {Object.entries(AVATARS).map(([key, { label, emoji }]) => (
+              {Object.entries(AVATARS).map(([key, char]) => (
                 <button key={key} onClick={() => { setF("defaultAvatar", key); setF("defaultAvatarStyle", AVATARS[key]?.styles[0] ?? ""); }}
                   className={cn(
-                    "flex flex-col items-center gap-1 py-2.5 rounded-lg border text-xs font-medium transition-all",
-                    form.defaultAvatar === key ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
+                    "relative flex flex-col items-center gap-1 py-2.5 rounded-lg border-2 text-xs font-medium transition-all overflow-hidden",
+                    form.defaultAvatar === key ? "border-primary" : "border-border hover:border-primary/40"
                   )}
                 >
-                  <span className="text-lg">{emoji}</span>
-                  <span>{label}</span>
+                  <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${char.gradient[0]}, ${char.gradient[1]})` }} />
+                  <div className="relative z-10 flex flex-col items-center gap-1">
+                    <span className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-sm">{char.label[0]}</span>
+                    <span className="text-white text-[10px]">{char.label}</span>
+                  </div>
                 </button>
               ))}
             </div>
