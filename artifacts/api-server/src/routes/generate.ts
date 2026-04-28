@@ -84,7 +84,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     topic = "",
     platform = "",
     avatar = "lisa",
-    avatarStyle = "graceful-sitting",
+    avatarStyle = "",
     voice = "en-US-AvaMultilingualNeural",
     voiceStyle,
     scriptStyle = "viral",

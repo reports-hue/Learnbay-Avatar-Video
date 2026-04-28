@@ -376,7 +376,13 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
 
   // Step 3 — avatar & voice
   const [avatar, setAvatar] = useState(brand.defaultAvatar || "lisa");
-  const [avatarStyle, setAvatarStyle] = useState(brand.defaultAvatarStyle || "graceful-sitting");
+  const [avatarStyle, setAvatarStyle] = useState(() => {
+    const initialAvatar = brand.defaultAvatar || "lisa";
+    const charStyles = AVATARS[initialAvatar]?.styles ?? [""];
+    const brandStyle = brand.defaultAvatarStyle || "";
+    // Only use the brand style if it's actually valid for this avatar
+    return (brandStyle && charStyles.includes(brandStyle)) ? brandStyle : (charStyles[0] ?? "");
+  });
   const [voice, setVoice] = useState(brand.defaultVoice || "en-US-AvaMultilingualNeural");
   const [voiceStyle, setVoiceStyle] = useState(brand.defaultVoiceStyle || "");
   const [captionStyle, setCaptionStyle] = useState(brand.defaultCaptionStyle || "animated");
