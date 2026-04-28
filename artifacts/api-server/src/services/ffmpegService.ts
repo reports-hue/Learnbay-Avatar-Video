@@ -395,17 +395,29 @@ export async function postProcessAvatarVideo(
     let lastV = "av_framed";
 
     if (useGreenScreen) {
-      // Chroma key: remove green screen, composite onto background
-      const avatarH = Math.round(outH * (isVertical ? 0.82 : 0.88));
-      const avatarY = outH - avatarH - (isVertical ? 50 : 30);
       fp.push(`[${avatarIdx}:v]chromakey=color=0x00ff00:similarity=0.25:blend=0.05[ck_out]`);
-      fp.push(`[ck_out]scale=-2:${avatarH}[av_s]`);
-      fp.push(`[bg][av_s]overlay=(W-w)/2:${avatarY}[av_framed]`);
+      if (isVertical) {
+        // Portrait output: Azure returns landscape (1920×1080). Scale to full output
+        // height so the avatar fills the frame top-to-bottom, then center-crop to
+        // output width. This prevents the "tiny box" regression where the avatar
+        // only occupied the bottom 30% of the portrait frame.
+        fp.push(`[ck_out]scale=-2:${outH}[av_tall]`);
+        fp.push(`[av_tall]crop=${outW}:${outH}:(iw-${outW})/2:0[av_s]`);
+        fp.push(`[bg][av_s]overlay=0:0[av_framed]`);
+      } else {
+        // Landscape output: scale avatar to 88% of output height and anchor to bottom
+        const avatarH = Math.round(outH * 0.88);
+        const avatarY = outH - avatarH - 30;
+        fp.push(`[ck_out]scale=-2:${avatarH}[av_s]`);
+        fp.push(`[bg][av_s]overlay=(W-w)/2:${avatarY}[av_framed]`);
+      }
     } else {
       // Non-green-screen: scale avatar and overlay on background
       if (isVertical) {
-        fp.push(`[${avatarIdx}:v]scale=${outW}:-2[av_s]`);
-        fp.push(`[bg][av_s]overlay=(W-w)/2:(H-h)*3/5[av_framed]`);
+        // Same cover approach: scale to full height, center-crop width
+        fp.push(`[${avatarIdx}:v]scale=-2:${outH}[av_tall]`);
+        fp.push(`[av_tall]crop=${outW}:${outH}:(iw-${outW})/2:0[av_s]`);
+        fp.push(`[bg][av_s]overlay=0:0[av_framed]`);
       } else {
         fp.push(`[${avatarIdx}:v]scale=${outW}:${outH}:force_original_aspect_ratio=decrease[av_s]`);
         fp.push(`[bg][av_s]overlay=(W-w)/2:(H-h)/2[av_framed]`);
