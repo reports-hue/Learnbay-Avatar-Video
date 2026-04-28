@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Film, Download, Trash2, Search, Plus, Clock } from "lucide-react";
+import { Film, Download, Trash2, Search, Plus, Clock, Play, X } from "lucide-react";
 import type { VideoEntry, Page } from "@/lib/types";
 import { SCRIPT_STYLES } from "@/lib/config";
 import { cn } from "@/lib/utils";
@@ -22,9 +22,72 @@ function styleLabel(val: string) {
   return SCRIPT_STYLES.find((s) => s.value === val)?.label ?? val;
 }
 
+// ─── Video Player Modal ───────────────────────────────────────────
+function VideoModal({ video, onClose }: { video: VideoEntry; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl overflow-hidden shadow-2xl w-full max-w-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground truncate pr-4">{video.topic}</p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <Badge variant="secondary" className="text-[10px] py-0">{video.platform}</Badge>
+              <Badge variant="outline" className="text-[10px] py-0">{styleLabel(video.scriptStyle)}</Badge>
+              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <Clock className="w-3 h-3" />{formatDate(video.createdAt)}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-gray-100 hover:text-foreground transition-colors shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Video player */}
+        <div className="bg-black">
+          <video
+            src={video.videoUrl}
+            controls
+            autoPlay
+            playsInline
+            className="w-full max-h-[70vh] object-contain"
+          />
+        </div>
+
+        {/* Footer actions */}
+        <div className="flex items-center gap-2 px-4 py-3 border-t border-border bg-gray-50">
+          {video.brandTheme && (
+            <div className="flex items-center gap-1 mr-auto">
+              {[video.brandTheme.bgColor1, video.brandTheme.bgColor2, video.brandTheme.accentColor].map((c, i) => (
+                <span key={i} className="w-3 h-3 rounded-full border border-border" style={{ background: c }} />
+              ))}
+            </div>
+          )}
+          <a href={video.videoUrl} download={`libraryminds-${video.id}.mp4`}>
+            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
+              <Download className="w-3.5 h-3.5" /> Download MP4
+            </Button>
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function VideoLibrary({ library, removeVideo, setPage }: Props) {
   const [query, setQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [playingVideo, setPlayingVideo] = useState<VideoEntry | null>(null);
 
   const filtered = query.trim()
     ? library.filter((v) =>
@@ -35,6 +98,7 @@ export function VideoLibrary({ library, removeVideo, setPage }: Props) {
 
   function handleDelete(id: string) {
     if (confirmDelete === id) {
+      if (playingVideo?.id === id) setPlayingVideo(null);
       removeVideo(id);
       setConfirmDelete(null);
     } else {
@@ -45,6 +109,11 @@ export function VideoLibrary({ library, removeVideo, setPage }: Props) {
 
   return (
     <div className="space-y-6">
+      {/* Modal */}
+      {playingVideo && (
+        <VideoModal video={playingVideo} onClose={() => setPlayingVideo(null)} />
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
         <div>
@@ -79,6 +148,7 @@ export function VideoLibrary({ library, removeVideo, setPage }: Props) {
               key={video.id}
               video={video}
               confirmDelete={confirmDelete}
+              onPlay={() => setPlayingVideo(video)}
               onDelete={() => handleDelete(video.id)}
             />
           ))}
@@ -106,47 +176,44 @@ export function VideoLibrary({ library, removeVideo, setPage }: Props) {
   );
 }
 
-function VideoCard({ video, confirmDelete, onDelete }: {
+function VideoCard({ video, confirmDelete, onPlay, onDelete }: {
   video: VideoEntry;
   confirmDelete: string | null;
+  onPlay: () => void;
   onDelete: () => void;
 }) {
-  const [mediaError, setMediaError] = useState(false);
+  const [thumbError, setThumbError] = useState(false);
 
   return (
     <div className="bg-white border border-border rounded-xl overflow-hidden group hover:border-primary/30 hover:shadow-sm transition-all">
-      {/* Thumbnail / preview */}
-      <div className="aspect-video bg-gray-100 relative overflow-hidden">
-        {!mediaError && video.thumbnailUrl ? (
-          <div className="w-full h-full relative">
-            <img
-              src={video.thumbnailUrl}
-              alt={video.topic}
-              className="w-full h-full object-cover"
-              onError={() => setMediaError(true)}
-            />
-            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20">
-              <div className="w-10 h-10 rounded-full bg-black/50 flex items-center justify-center">
-                <Film className="w-5 h-5 text-white" />
-              </div>
-            </div>
-          </div>
-        ) : !mediaError ? (
-          <video
-            src={video.videoUrl}
+      {/* Thumbnail / preview — click to play */}
+      <div
+        className="aspect-video bg-gray-100 relative overflow-hidden cursor-pointer"
+        onClick={onPlay}
+        role="button"
+        aria-label={`Play ${video.topic}`}
+      >
+        {!thumbError && video.thumbnailUrl ? (
+          <img
+            src={video.thumbnailUrl}
+            alt={video.topic}
             className="w-full h-full object-cover"
-            preload="metadata"
-            muted
-            onError={() => setMediaError(true)}
+            onError={() => setThumbError(true)}
           />
         ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
-            <Film className="w-7 h-7 opacity-30" />
-            <span className="text-xs opacity-50">Video unavailable</span>
+          <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground bg-gray-50">
+            <Film className="w-7 h-7 opacity-20" />
           </div>
         )}
 
-        {/* Brand theme color strip */}
+        {/* Play overlay */}
+        <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-all">
+          <div className="w-12 h-12 rounded-full bg-white/90 shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity scale-90 group-hover:scale-100">
+            <Play className="w-5 h-5 text-primary ml-0.5" />
+          </div>
+        </div>
+
+        {/* Brand color strip */}
         {video.brandTheme && (
           <div className="absolute bottom-0 left-0 right-0 h-1 flex">
             <div className="flex-1" style={{ background: video.brandTheme.bgColor1 }} />
@@ -171,9 +238,12 @@ function VideoCard({ video, confirmDelete, onDelete }: {
 
         {/* Actions */}
         <div className="flex gap-2 pt-1">
-          <a href={video.videoUrl} download={`libraryminds-${video.id}.mp4`} className="flex-1">
-            <Button size="sm" variant="outline" className="w-full text-xs gap-1.5">
-              <Download className="w-3.5 h-3.5" /> Download
+          <Button size="sm" variant="default" className="flex-1 text-xs gap-1.5" onClick={onPlay}>
+            <Play className="w-3.5 h-3.5" /> Play
+          </Button>
+          <a href={video.videoUrl} download={`libraryminds-${video.id}.mp4`}>
+            <Button size="sm" variant="outline" className="text-xs gap-1.5">
+              <Download className="w-3.5 h-3.5" />
             </Button>
           </a>
           <Button
