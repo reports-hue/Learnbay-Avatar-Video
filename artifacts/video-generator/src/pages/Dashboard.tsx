@@ -1,8 +1,10 @@
-import { Film, TrendingUp, Plus, ArrowRight, Building2, Clock, Clapperboard } from "lucide-react";
+import { useState } from "react";
+import { Film, TrendingUp, Plus, ArrowRight, Building2, Clock, Clapperboard, Play } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { BrandProfile, VideoEntry, Page } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { VideoModal } from "@/components/VideoModal";
 
 interface Props {
   brand: BrandProfile;
@@ -24,9 +26,15 @@ export function Dashboard({ brand, library, setPage }: Props) {
   const hasBrand = Boolean(brand.companyName);
   const recent = library.slice(0, 4);
   const weekCount = statsThisWeek(library);
+  const [playingVideo, setPlayingVideo] = useState<VideoEntry | null>(null);
 
   return (
     <div className="space-y-8">
+      {/* ── Video modal ── */}
+      {playingVideo && (
+        <VideoModal video={playingVideo} onClose={() => setPlayingVideo(null)} />
+      )}
+
       {/* ── Welcome header ── */}
       <div>
         <h1 className="text-2xl font-bold text-foreground">
@@ -103,18 +111,29 @@ export function Dashboard({ brand, library, setPage }: Props) {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {recent.map((video) => (
-              <div key={video.id} className="bg-white border border-border rounded-xl overflow-hidden group hover:border-primary/30 hover:shadow-sm transition-all">
-                <div className="aspect-video bg-gray-100 relative overflow-hidden">
-                  <video
-                    src={video.videoUrl}
-                    className="w-full h-full object-cover"
-                    preload="metadata"
-                    muted
-                    onError={(e) => {
-                      const el = e.currentTarget.parentElement;
-                      if (el) el.innerHTML = `<div class="w-full h-full flex items-center justify-center text-muted-foreground text-xs">Video unavailable</div>`;
-                    }}
-                  />
+              <div
+                key={video.id}
+                className="bg-white border border-border rounded-xl overflow-hidden group hover:border-primary/30 hover:shadow-sm transition-all cursor-pointer"
+                onClick={() => setPlayingVideo(video)}
+              >
+                <div className="aspect-video bg-gray-900 relative overflow-hidden">
+                  {video.thumbnailUrl ? (
+                    <img
+                      src={video.thumbnailUrl}
+                      alt={video.topic}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Film className="w-8 h-8 text-gray-600" />
+                    </div>
+                  )}
+                  {/* Play overlay */}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="w-12 h-12 rounded-full bg-white/90 flex items-center justify-center shadow-lg">
+                      <Play className="w-5 h-5 text-gray-900 fill-gray-900 ml-0.5" />
+                    </div>
+                  </div>
                 </div>
                 <div className="p-3 space-y-1.5">
                   <p className="text-sm font-medium text-foreground line-clamp-1">{video.topic}</p>
