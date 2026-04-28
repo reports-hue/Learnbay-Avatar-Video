@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Libraryminds Personal Video Generator</title>
+  <style>
+    :root {
+      --bg: #0f0f13;
+      --surface: #1a1a23;
+      --border: #2e2e3e;
+      --accent: #7c5cfc;
+      --accent-glow: #7c5cfc44;
+      --text: #f0f0f5;
+      --text-muted: #8888aa;
+      --success: #22c55e;
+      --error: #ef4444;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 48px 16px 80px;
+    }
+
+    header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 40px;
+    }
+
+    header img {
+      height: 56px;
+      object-fit: contain;
+    }
+
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #fff 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      width: 100%;
+      max-width: 560px;
+    }
+
+    .field {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+    }
+
+    input, select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 1rem;
+      padding: 12px 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input::placeholder { color: var(--text-muted); }
+
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    select option { background: #1a1a23; }
+
+    button#generateBtn {
+      width: 100%;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+      transition: opacity 0.2s, transform 0.1s;
+      margin-top: 8px;
+    }
+
+    button#generateBtn:hover:not(:disabled) { opacity: 0.9; }
+    button#generateBtn:active:not(:disabled) { transform: scale(0.98); }
+    button#generateBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .progress {
+      display: none;
+      margin-top: 28px;
+    }
+
+    .steps {
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+      margin-bottom: 16px;
+    }
+
+    .step {
+      flex: 1;
+      text-align: center;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 8px 4px;
+      border-radius: 6px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      transition: all 0.3s;
+    }
+
+    .step.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-glow);
+    }
+
+    .step.done {
+      border-color: var(--success);
+      color: var(--success);
+      background: #22c55e18;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .status-text {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .result {
+      display: none;
+      margin-top: 28px;
+    }
+
+    .result h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    video {
+      width: 100%;
+      border-radius: 8px;
+      background: #000;
+      display: block;
+      margin-bottom: 12px;
+    }
+
+    .script-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+      max-height: 160px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+
+    .download-btn {
+      display: inline-block;
+      background: var(--success);
+      color: #fff;
+      text-decoration: none;
+      border-radius: 8px;
+      padding: 11px 24px;
+      font-weight: 700;
+      font-size: 0.95rem;
+      transition: opacity 0.2s;
+    }
+
+    .download-btn:hover { opacity: 0.88; }
+
+    .error-box {
+      display: none;
+      margin-top: 20px;
+      background: #ef444420;
+      border: 1px solid var(--error);
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 0.9rem;
+      color: var(--error);
+    }
+
+    .asset-notice {
+      margin-top: 24px;
+      background: #7c5cfc11;
+      border: 1px solid #7c5cfc44;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .asset-notice strong { color: var(--text); }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="/api/assets/logo.png" alt="Libraryminds" id="logoImg" onerror="this.style.display='none'" />
+    <h1>Libraryminds Video Generator</h1>
+    <p>AI-powered video creation — script, voice, captions, all automatic</p>
+  </header>
+
+  <div class="card">
+    <div class="field">
+      <label for="topic">Video Topic</label>
+      <input type="text" id="topic" placeholder="e.g. 5 productivity tips for remote workers" />
+    </div>
+    <div class="field">
+      <label for="platform">Platform</label>
+      <select id="platform">
+        <option value="YouTube Shorts">YouTube Shorts (9:16, 20–30 sec)</option>
+        <option value="Instagram Reels">Instagram Reels (9:16, 20–30 sec)</option>
+        <option value="Facebook Reels">Facebook Reels (9:16, 20–30 sec)</option>
+        <option value="YouTube Video">YouTube Video (16:9, 60–90 sec)</option>
+        <option value="Landscape Video">Landscape Video (16:9, 30–60 sec)</option>
+      </select>
+    </div>
+
+    <button id="generateBtn" onclick="generate()">Generate Video</button>
+
+    <div class="progress" id="progress">
+      <div class="steps">
+        <div class="step" id="step-script">Script</div>
+        <div class="step" id="step-voice">Voice</div>
+        <div class="step" id="step-edit">Editing</div>
+        <div class="step" id="step-done">Done</div>
+      </div>
+      <p class="status-text" id="statusText"><span class="spinner"></span>Starting...</p>
+    </div>
+
+    <div class="error-box" id="errorBox"></div>
+
+    <div class="result" id="result">
+      <h2>Generated Script</h2>
+      <div class="script-box" id="scriptBox"></div>
+
+      <h2>Your Video</h2>
+      <video id="videoPlayer" controls playsinline></video>
+      <a id="downloadLink" class="download-btn" download="libraryminds-video.mp4">Download Video</a>
+    </div>
+
+    <div class="asset-notice" id="assetNotice">
+      <strong>Required assets</strong> — place these in the <code>assets/</code> folder on the server before generating:<br>
+      <code>avatar.mp4</code>, <code>bg_vertical.mp4</code>, <code>bg_horizontal.mp4</code>, <code>logo.png</code>, <code>music.mp3</code>
+      <br><br>Missing assets are skipped gracefully so you can generate without them.
+    </div>
+  </div>
+
+  <script>
+    const STEPS = ["script", "voice", "edit", "done"];
+
+    function setStep(name) {
+      STEPS.forEach((s) => {
+        const el = document.getElementById("step-" + s);
+        const idx = STEPS.indexOf(s);
+        const target = STEPS.indexOf(name);
+        if (idx < target) el.className = "step done";
+        else if (idx === target) el.className = "step active";
+        else el.className = "step";
+      });
+    }
+
+    function setStatus(text) {
+      document.getElementById("statusText").innerHTML =
+        '<span class="spinner"></span>' + text;
+    }
+
+    function showError(msg) {
+      const box = document.getElementById("errorBox");
+      box.style.display = "block";
+      box.textContent = "Error: " + msg;
+    }
+
+    async function generate() {
+      const topic = document.getElementById("topic").value.trim();
+      const platform = document.getElementById("platform").value;
+
+      if (!topic) {
+        alert("Please enter a topic.");
+        return;
+      }
+
+      const btn = document.getElementById("generateBtn");
+      btn.disabled = true;
+      document.getElementById("progress").style.display = "block";
+      document.getElementById("result").style.display = "none";
+      document.getElementById("errorBox").style.display = "none";
+
+      setStep("script");
+      setStatus("Generating AI script...");
+
+      try {
+        const res = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topic, platform }),
+        });
+
+        setStep("voice");
+        setStatus("Synthesising voice...");
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({ error: res.statusText }));
+          throw new Error(data.error || res.statusText);
+        }
+
+        setStep("edit");
+        setStatus("Editing video with FFmpeg...");
+
+        const data = await res.json();
+
+        setStep("done");
+        setStatus("Done!");
+        document.getElementById("statusText").innerHTML = "✓ Video ready!";
+
+        document.getElementById("scriptBox").textContent = data.script;
+        const videoEl = document.getElementById("videoPlayer");
+        videoEl.src = data.videoUrl + "?t=" + Date.now();
+        document.getElementById("downloadLink").href = data.videoUrl;
+        document.getElementById("result").style.display = "block";
+      } catch (err) {
+        showError(err.message);
+        document.getElementById("progress").style.display = "none";
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.getElementById("topic").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") generate();
+    });
+  </script>
+</body>
+</html>
