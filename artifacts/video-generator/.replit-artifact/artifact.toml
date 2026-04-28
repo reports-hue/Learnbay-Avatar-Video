@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Libraryminds Video Generator"
+version = "1.0.0"
+id = "artifacts/video-generator"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24396
+
+[services.development]
+run = "pnpm --filter @workspace/video-generator run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/video-generator", "run", "build" ]
+publicDir = "artifacts/video-generator/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24396"
+BASE_PATH = "/"
