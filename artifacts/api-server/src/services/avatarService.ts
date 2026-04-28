@@ -115,7 +115,7 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
   const key = process.env.AZURE_SPEECH_KEY ?? "";
   const jobId = uuidv4();
 
-  const baseUrl = `https://${region}.api.cognitive.microsoft.com/avatar/batchsyntheses/${jobId}?api-version=2024-04-15-preview`;
+  const baseUrl = `https://${region}.api.cognitive.microsoft.com/avatar/batchsyntheses/${jobId}?api-version=2024-08-01`;
 
   // In realism mode: use green screen background for chroma key compositing
   const effectiveBgColor = config.realism !== false ? "#00FF00FF" : config.backgroundColor;
@@ -129,11 +129,11 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
     backgroundColor: config.bgImageUrl ? "#000000FF" : effectiveBgColor,
     bitrateKbps: 4000,
     subtitleType: "none",
-    gestureEnabled: true,
   };
 
+  // backgroundImage must be a plain URL string per the official OpenAPI spec
   if (config.bgImageUrl) {
-    avatarConfig["backgroundImage"] = { url: config.bgImageUrl, fileName: "background.jpg" };
+    avatarConfig["backgroundImage"] = config.bgImageUrl;
   }
 
   let requestBody: Record<string, unknown>;
@@ -142,6 +142,8 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
     // Pre-synthesized audio mode (e.g. ElevenLabs) — avatar lip-syncs to external audio
     logger.info({ audioUrl: config.audioUrl }, "Using PreSynthesizedAudio mode");
     requestBody = {
+      synthesisConfig: { voice: config.voice },
+      customVoices: {},
       avatarConfig,
       inputKind: "PreSynthesizedAudio",
       inputs: [{ audioUrl: config.audioUrl }],
@@ -150,6 +152,8 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
     // Default: SSML with Azure TTS
     const ssml = buildSsml(config.script, config.voice, config.voiceStyle, config.pacing ?? "natural");
     requestBody = {
+      synthesisConfig: { voice: config.voice },
+      customVoices: {},
       avatarConfig,
       inputKind: "SSML",
       inputs: [{ content: ssml }],
