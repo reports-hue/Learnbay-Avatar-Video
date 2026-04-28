@@ -11,50 +11,88 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Package manager**: pnpm
 - **TypeScript version**: 5.9
 - **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
+- **Build**: esbuild (bundle into dist/index.mjs)
 
 ## Key Commands
 
 - `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
+
+---
 
 ## Libraryminds Personal Video Generator
 
-A personal, no-auth video generation tool accessible at the root `/`.
+A no-auth, avatar video generation tool powered by Azure AI — similar to HeyGen.
+
+### Architecture
+
+```
+artifacts/
+  api-server/      Express 5 API (port 8080 → 80)
+  video-generator/ React + Vite frontend (port 24396 → proxied via api-server)
+```
 
 ### Features
-- AI script generation via Azure OpenAI
-- Voice synthesis via Azure Speech TTS (en-US-AriaNeural)
-- SRT subtitle generation
-- FFmpeg video processing: avatar overlay, background, logo, captions, music
-- Supports vertical (9:16) and horizontal (16:9) platforms
 
-### Service Files
-- `artifacts/api-server/src/services/openai.ts` — Azure OpenAI script generation
-- `artifacts/api-server/src/services/speech.ts` — Azure Speech TTS voice synthesis
-- `artifacts/api-server/src/services/ffmpegService.ts` — FFmpeg video assembly
-- `artifacts/api-server/src/utils/srtGenerator.ts` — SRT subtitle file creation
-- `artifacts/api-server/src/routes/generate.ts` — POST /api/generate, GET /api/video/:filename
-- `artifacts/api-server/public/index.html` — Frontend UI
+| Feature | Details |
+|---|---|
+| **AI Script Generation** | Azure OpenAI (gpt-4o-mini), 5 styles: Viral Hook, Listicle, Story, Educational, Sales |
+| **Avatar Synthesis** | Azure AI Avatar Batch Synthesis API (PUT + poll pattern) |
+| **Voice Emotion** | SSML `express-as` styles (per-voice: chat, empathetic, cheerful, etc.) |
+| **Word-by-Word Captions** | Speech SDK `wordBoundary` events → animated ASS captions |
+| **Scene Presets** | Auto AI (GPT picks), Creator, Corporate, Tech, Lifestyle, Business, Custom, Image URL |
+| **Gradient Backgrounds** | FFmpeg `gradients` source filter with 2-color linear gradient |
+| **Cinematic Effects** | `unsharp` sharpen, `vignette`, fade-in/fade-out |
+| **Lower-Third Branding** | 2-layer dark overlay + accent color bar + logo overlay |
+| **CTA Text** | ASS subtitle in lower-third area |
+| **SSE Progress Streaming** | Real-time `event: progress` stream over POST /api/generate |
+| **Platform Support** | Vertical 9:16 (Shorts/Reels, 1080×1920) + Horizontal 16:9 (1920×1080) |
 
-### Required Assets (place in `artifacts/api-server/assets/`)
-- `avatar.mp4` — talking avatar video
-- `bg_vertical.mp4` — background for vertical (Shorts/Reels)
-- `bg_horizontal.mp4` — background for horizontal (YouTube/Landscape)
-- `logo.png` — Libraryminds logo
-- `music.mp3` — background music
+### Service Files (api-server)
+
+- `src/services/openai.ts` — `generateScript()` (ScriptStyle enum), `generateBrandTheme()`
+- `src/services/speech.ts` — `getWordTimings()` with Speech SDK word-boundary events + estimation fallback
+- `src/services/avatarService.ts` — `generateAvatarVideo()` with SSML support + polling
+- `src/services/ffmpegService.ts` — Full post-processing pipeline: gradient bg, avatar overlay, cinematic fx, animated captions, lower-third, CTA
+- `src/routes/generate.ts` — `POST /api/generate` (SSE streaming), `GET /api/video/:filename`
+
+### FFmpeg Filter Graph (order)
+
+1. Gradient/flat background (`gradients` or `pad`)
+2. Avatar overlay (scaled, centered)
+3. Cinematic sharpen (`unsharp`) + vignette
+4. Lower-third dark overlay (2-layer `drawbox`)
+5. Brand accent line (`drawbox`)
+6. Logo overlay (top-right)
+7. Word captions (`subtitles` with animated ASS)
+8. CTA text (`subtitles` with CTA ASS)
+9. Fade in/out
+10. FPS normalize to 30fps
+
+### Available FFmpeg Filters (confirmed in ffmpeg-static 5.3.0)
+
+`gradients`, `drawbox` (alpha), `subtitles` (libass), `vignette`, `unsharp`, `fade`, `gblur`, `overlay`, `scale`, `pad`, `fps`
+
+**NOT available**: `drawtext` (no libfreetype), `zoompan`
+
+### Azure Avatar API
+
+- Endpoint: `https://{AZURE_SPEECH_REGION}.api.cognitive.microsoft.com/avatar/batchsyntheses/{jobId}?api-version=2024-04-15-preview`
+- Method: PUT to create, GET to poll
+- `inputKind: "PlainText"` or `"SSML"` (when voice style is requested)
+- Poll interval: 6s, max wait: 25min
 
 ### Environment Secrets Required
+
 - `AZURE_OPENAI_API_KEY`
 - `AZURE_OPENAI_ENDPOINT`
-- `AZURE_OPENAI_DEPLOYMENT` (optional, defaults to `gpt-4o`)
+- `AZURE_OPENAI_DEPLOYMENT` (optional, defaults to `gpt-4o-mini`)
 - `AZURE_SPEECH_KEY`
 - `AZURE_SPEECH_REGION`
 
-See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+### Asset Directory (`artifacts/api-server/assets/`)
+
+- `logo.png` — Libraryminds logo (shown top-right)
+- `music.mp3` — optional background music (auto-mixed at 7% volume)
+
+See the `pnpm-workspace` skill for workspace structure and TypeScript setup.

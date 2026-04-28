@@ -13,12 +13,22 @@ const client = new OpenAI({
   defaultHeaders: { "api-key": apiKey },
 });
 
+export type ScriptStyle = "viral" | "listicle" | "story" | "educational" | "sales";
+
 const DURATIONS: Record<string, string> = {
   "YouTube Shorts": "20-30 seconds",
   "Instagram Reels": "20-30 seconds",
   "Facebook Reels": "20-30 seconds",
   "YouTube Video": "60-90 seconds",
   "Landscape Video": "30-60 seconds",
+};
+
+const STYLE_PROMPTS: Record<ScriptStyle, string> = {
+  viral: `Open with a shocking statement or question that stops the scroll. Fast-paced, punchy sentences. Create urgency. End with a strong CTA to follow.`,
+  listicle: `Structure as a numbered list (3-5 points). Clear intro: "Here are X [things/tips/secrets]..." Each point is one sentence max. Rapid-fire delivery.`,
+  story: `Open with "I used to..." or "Last [time period], I..." Build tension, reveal the lesson, apply it to the viewer. Personal and relatable.`,
+  educational: `Explain one key concept clearly. Use an analogy. Give one actionable takeaway. Position as the expert. "What most people don't know is..."`,
+  sales: `Problem → Agitate → Solve. Open with the pain point, make the viewer feel it, then reveal the solution as the hero. End with urgency CTA.`,
 };
 
 export interface BrandTheme {
@@ -28,22 +38,13 @@ export interface BrandTheme {
 }
 
 export async function generateBrandTheme(topic: string, platform: string): Promise<BrandTheme> {
-  const prompt = `You are a professional motion graphics designer. Given a video topic and platform, choose a sophisticated, broadcast-quality color scheme for the video background and branding.
+  const prompt = `You are a professional motion graphics designer. Choose a sophisticated broadcast-quality color scheme for a ${platform} video about: "${topic}".
 
-Topic: "${topic}"
-Platform: ${platform}
+- bgColor1: dark primary background (hex #RRGGBB, must be dark/deep)
+- bgColor2: lighter variant of same hue (for gradient — should be distinctly lighter, 20-40% lighter)
+- accentColor: vibrant contrast accent matching the topic mood (not neon, premium brand palette)
 
-Rules:
-- bgColor1: the primary dark background color (hex #RRGGBB, should be dark/deep)
-- bgColor2: a slightly lighter/warmer variant of the same hue (for a vertical gradient from top to bottom)
-- accentColor: a vibrant accent color that contrasts well and matches the topic mood
-- Colors must be professional, modern, and appropriate for the topic/niche
-- No neon colors. Think premium brand palette.
-
-Return ONLY valid JSON like:
-{"bgColor1":"#0D1B2A","bgColor2":"#1A3A5C","accentColor":"#4A9FFF"}`;
-
-  logger.info({ topic, platform }, "Generating brand theme");
+Return ONLY valid JSON: {"bgColor1":"#0D1B2A","bgColor2":"#1A3A5C","accentColor":"#4A9FFF"}`;
 
   const response = await client.chat.completions.create({
     model: deploymentName,
@@ -68,30 +69,33 @@ Return ONLY valid JSON like:
   }
 }
 
-export async function generateScript(topic: string, platform: string): Promise<string> {
+export async function generateScript(topic: string, platform: string, style: ScriptStyle = "viral"): Promise<string> {
   const duration = DURATIONS[platform] ?? "20-30 seconds";
+  const styleGuide = STYLE_PROMPTS[style];
 
-  const prompt = `Create a highly engaging video script for ${platform} on topic: ${topic}.
+  const prompt = `Create a highly engaging ${platform} video script about: ${topic}
+
+Style: ${styleGuide}
 
 Rules:
-- Strong hook in first 2 seconds
-- Short sentences
-- Natural pauses (use ... for pauses)
+- Strong hook in the FIRST 2 seconds
+- Short punchy sentences — max 10 words each
+- Natural pauses with ... where the speaker should breathe
 - End with: Follow Libraryminds
-- Duration: ${duration}
-- No stage directions, no speaker labels, no timestamps
-- Return clean script only, no extra formatting`;
+- Target duration: ${duration}
+- NO stage directions, NO speaker labels, NO brackets, NO timestamps
+- Return clean script text ONLY`;
 
-  logger.info({ topic, platform }, "Generating script");
+  logger.info({ topic, platform, style }, "Generating script");
 
   const response = await client.chat.completions.create({
     model: deploymentName,
     messages: [{ role: "user", content: prompt }],
     max_tokens: 600,
-    temperature: 0.85,
+    temperature: 0.88,
   });
 
   const script = response.choices[0]?.message?.content?.trim() ?? "";
-  logger.info({ scriptLength: script.length }, "Script generated");
+  logger.info({ scriptLength: script.length, style }, "Script generated");
   return script;
 }
