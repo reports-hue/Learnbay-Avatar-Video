@@ -8,6 +8,7 @@ import { generateScript, generateBrandTheme, type ScriptStyle } from "../service
 import { generateAvatarVideo, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
 import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle } from "../services/ffmpegService.js";
 import { getWordTimings } from "../services/speech.js";
+import { synthesizeElevenLabs } from "../services/elevenLabsService.js";
 
 const router: IRouter = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,6 +39,8 @@ export interface GenerateRequest {
   realism?: boolean;
   pacing?: PacingRate;
   customPhotoUrl?: string;
+  // ElevenLabs: pass API key from client when voice starts with "el:"
+  elevenLabsKey?: string;
 }
 
 // ─── Video generation (SSE) ─────────────────────────────────────
@@ -60,7 +63,13 @@ router.post("/generate", async (req: Request, res: Response) => {
     autoBackground = false,
     realism = true,
     pacing = "natural",
+    elevenLabsKey,
   } = req.body as GenerateRequest;
+
+  // Detect ElevenLabs voice (prefixed with "el:")
+  const isElevenLabs = typeof voice === "string" && voice.startsWith("el:");
+  const elVoiceId = isElevenLabs ? voice.slice(3) : null;
+  const elApiKey = elevenLabsKey || process.env.ELEVENLABS_API_KEY || "";
 
   if (!topic || !platform) {
     res.status(400).json({ error: "topic and platform are required" });
@@ -108,10 +117,29 @@ router.post("/generate", async (req: Request, res: Response) => {
     // ── Step 2: Word timings (for captions) ──
     const pacingRate = PACING_SSML_RATE[pacing] ?? "0.95";
     let wordTimings: import("../services/speech.js").WordTiming[] = [];
-    if (captionStyle !== "none") {
+
+    // ElevenLabs audio synthesis — runs before avatar step since we need the public audio URL
+    let elAudioUrl: string | undefined;
+    if (isElevenLabs && elVoiceId) {
+      if (!elApiKey) throw new Error("ElevenLabs API key is required. Add it in Settings or set ELEVENLABS_API_KEY.");
+      send("progress", { step: "elevenlabs", percent: 20, message: "Synthesizing voice with ElevenLabs…" });
+      const elResult = await synthesizeElevenLabs(script, elVoiceId, elApiKey);
+      // Construct a publicly accessible URL for the audio file
+      // Azure's servers need to reach this URL — use the Replit dev domain or PUBLIC_URL
+      const publicDomain = process.env.REPLIT_DEV_DOMAIN || process.env.PUBLIC_URL;
+      if (!publicDomain) throw new Error("Cannot determine public URL for ElevenLabs audio. Set REPLIT_DEV_DOMAIN or PUBLIC_URL.");
+      elAudioUrl = `https://${publicDomain}/api/video/${elResult.filename}`;
+      // Convert ElevenLabs ms timings → WordTiming format (startSec/durationSec)
+      wordTimings = elResult.wordTimings.map(t => ({
+        word: t.word,
+        startSec: t.start / 1000,
+        durationSec: (t.end - t.start) / 1000,
+      }));
+      req.log.info({ audioUrl: elAudioUrl, wordCount: wordTimings.length }, "ElevenLabs audio ready");
+    } else if (captionStyle !== "none") {
       try {
         wordTimings = await getWordTimings(script, voice, pacingRate);
-        req.log.info({ wordCount: wordTimings.length }, "Word timings ready");
+        req.log.info({ wordCount: wordTimings.length }, "Azure word timings ready");
       } catch (e) {
         req.log.warn({ err: e }, "Word timings failed, continuing without");
       }
@@ -128,12 +156,13 @@ router.post("/generate", async (req: Request, res: Response) => {
       script,
       character: avatar,
       style: avatarStyle,
-      voice,
+      voice: isElevenLabs ? "en-US-AvaMultilingualNeural" : voice, // fallback voice name (unused when audioUrl set)
       voiceStyle: voiceStyle || undefined,
       backgroundColor: azureBgColor,
       bgImageUrl: bgImageUrl || undefined,
       pacing,
       realism,
+      audioUrl: elAudioUrl, // set only for ElevenLabs; triggers PreSynthesizedAudio mode
     };
 
     const avatarVideoPath = await generateAvatarVideo(avatarConfig);

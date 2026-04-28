@@ -25,6 +25,16 @@ interface VoiceEntry {
   isMultilingual: boolean;
   styles: string[];
 }
+interface ElVoice {
+  voice_id: string;
+  name: string;
+  category: string;
+  labels: Record<string, string>;
+  description?: string;
+  preview_url: string;
+}
+const EL_KEY_LS = "el_api_key";
+const getElKey = () => localStorage.getItem(EL_KEY_LS) ?? "";
 interface BrandTheme { bgColor1: string; bgColor2: string; accentColor: string }
 interface GenerationResult {
   videoId: string; videoUrl: string; thumbnailUrl?: string;
@@ -107,8 +117,8 @@ function StepBar({ step }: { step: number }) {
 
 // ─── Voice Browser Modal ─────────────────────────────────────────
 interface VBMProps {
-  voices: VoiceEntry[] | null;
-  loading: boolean;
+  tab: "azure" | "elevenlabs"; onTabChange: (t: "azure" | "elevenlabs") => void;
+  voices: VoiceEntry[] | null; loading: boolean;
   selected: string;
   search: string; onSearchChange: (v: string) => void;
   gender: "all" | "Female" | "Male"; onGenderChange: (v: "all" | "Female" | "Male") => void;
@@ -118,9 +128,16 @@ interface VBMProps {
   onClose: () => void;
   onPreview: (v: string) => void;
   isPreviewing: boolean;
+  // ElevenLabs
+  elApiKey: string; elKeyInput: string; onElKeyInput: (v: string) => void; onElKeySave: (v: string) => void;
+  elVoices: ElVoice[] | null; loadingElVoices: boolean;
+  elSearch: string; onElSearchChange: (v: string) => void;
+  onFetchElVoices: (key: string) => void;
 }
 
-function VoiceBrowserModal({ voices, loading, selected, search, onSearchChange, gender, onGenderChange, locale, onLocaleChange, hdOnly, onHdOnlyChange, onSelect, onClose, onPreview, isPreviewing }: VBMProps) {
+function VoiceBrowserModal(props: VBMProps) {
+  const { tab, onTabChange, voices, loading, selected, search, onSearchChange, gender, onGenderChange, locale, onLocaleChange, hdOnly, onHdOnlyChange, onSelect, onClose, onPreview, isPreviewing, elApiKey, elKeyInput, onElKeyInput, onElKeySave, elVoices, loadingElVoices, elSearch, onElSearchChange } = props;
+
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -128,7 +145,6 @@ function VoiceBrowserModal({ voices, loading, selected, search, onSearchChange, 
   }, []);
 
   const locales = voices ? [...new Set(voices.map(v => v.locale))].sort() : [];
-
   const filtered = (voices ?? []).filter(v => {
     if (gender !== "all" && v.gender !== gender) return false;
     if (locale && v.locale !== locale) return false;
@@ -139,113 +155,188 @@ function VoiceBrowserModal({ voices, loading, selected, search, onSearchChange, 
     }
     return true;
   });
-
-  // Group by locale
   const grouped: Record<string, VoiceEntry[]> = {};
   filtered.forEach(v => {
     if (!grouped[v.locale]) grouped[v.locale] = [];
     grouped[v.locale].push(v);
   });
 
+  const filteredEl = (elVoices ?? []).filter(v =>
+    !elSearch || v.name.toLowerCase().includes(elSearch.toLowerCase()) ||
+    (v.labels?.accent ?? "").toLowerCase().includes(elSearch.toLowerCase())
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[90vh] sm:max-h-[80vh]" onClick={e => e.stopPropagation()}>
+
         {/* Header */}
         <div className="flex items-center gap-3 p-4 border-b border-border flex-shrink-0">
           <Globe className="w-5 h-5 text-primary" />
           <div className="flex-1">
             <h2 className="text-sm font-bold text-foreground">Voice Browser</h2>
-            <p className="text-[11px] text-muted-foreground">{voices ? `${voices.length} voices across ${locales.length} languages` : "Loading…"}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {tab === "azure"
+                ? voices ? `${voices.length} Azure voices across ${locales.length} languages` : "Loading Azure voices…"
+                : elVoices ? `${elVoices.length} ElevenLabs voices` : "Connect your ElevenLabs account"
+              }
+            </p>
           </div>
           <button onClick={onClose} className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center">
             <X className="w-4 h-4 text-muted-foreground" />
           </button>
         </div>
 
-        {/* Filters */}
-        <div className="px-4 py-3 border-b border-border flex flex-col gap-2 flex-shrink-0">
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-            <input
-              type="text" value={search} onChange={e => onSearchChange(e.target.value)}
-              placeholder="Search by name, language or locale…"
-              className="w-full pl-8 pr-3 py-2 text-xs border border-border rounded-lg bg-gray-50 focus:outline-none focus:border-primary"
-            />
-            {search && <button onClick={() => onSearchChange("")} className="absolute right-2.5 top-1/2 -translate-y-1/2"><X className="w-3 h-3 text-muted-foreground" /></button>}
-          </div>
-          {/* Filter row */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {(["all", "Female", "Male"] as const).map(g => (
-              <button key={g} onClick={() => onGenderChange(g)}
-                className={cn("px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all",
-                  gender === g ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
-                )}
-              >{g === "all" ? "All genders" : g}</button>
-            ))}
-            <button onClick={() => onHdOnlyChange(!hdOnly)}
-              className={cn("px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all",
-                hdOnly ? "border-violet-500 bg-violet-50 text-violet-700" : "border-border bg-white text-muted-foreground hover:border-primary/40"
+        {/* Tabs */}
+        <div className="flex border-b border-border flex-shrink-0">
+          {(["azure", "elevenlabs"] as const).map(t => (
+            <button key={t} onClick={() => onTabChange(t)}
+              className={cn("flex-1 py-2.5 text-xs font-semibold transition-all border-b-2 -mb-px",
+                tab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
               )}
-            >HD voices only</button>
-            <select value={locale} onChange={e => onLocaleChange(e.target.value)}
-              className="ml-auto text-[11px] border border-border rounded-lg px-2 py-1 bg-white text-muted-foreground focus:outline-none focus:border-primary max-w-[160px]"
             >
-              <option value="">All languages</option>
-              {locales.map(l => <option key={l} value={l}>{l}</option>)}
-            </select>
-          </div>
-        </div>
-
-        {/* Voice list */}
-        <div className="overflow-y-auto flex-1 p-4 space-y-4">
-          {loading && (
-            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading 600+ voices…
-            </div>
-          )}
-          {!loading && Object.keys(grouped).length === 0 && (
-            <div className="text-center py-12 text-sm text-muted-foreground">No voices match your filters</div>
-          )}
-          {!loading && Object.entries(grouped).map(([loc, vs]) => (
-            <div key={loc}>
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
-                {vs[0].localeName} <span className="opacity-50">· {loc} · {vs.length} voice{vs.length !== 1 ? "s" : ""}</span>
-              </p>
-              <div className="space-y-1">
-                {vs.map(v => (
-                  <div key={v.value}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2 rounded-lg border text-xs transition-all cursor-pointer hover:border-primary/40",
-                      selected === v.value ? "border-primary bg-violet-50" : "border-transparent hover:bg-gray-50"
-                    )}
-                    onClick={() => onSelect(v.value)}
-                  >
-                    <div className={cn(
-                      "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0",
-                      v.gender === "Female" ? "bg-pink-100 text-pink-600" : "bg-blue-100 text-blue-600"
-                    )}>
-                      {v.gender === "Female" ? "F" : "M"}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <span className="font-medium text-foreground">{v.label}</span>
-                      {v.isMultilingual && <span className="ml-1.5 text-[9px] text-violet-500 bg-violet-50 px-1 rounded">Multilingual</span>}
-                    </div>
-                    {v.isHD && <Badge variant="secondary" className="text-[9px] bg-violet-100 text-violet-700 border-0 py-0 h-4">HD</Badge>}
-                    {selected === v.value && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
-                    <button
-                      onClick={e => { e.stopPropagation(); onPreview(v.value); }}
-                      disabled={isPreviewing}
-                      className="p-1 rounded hover:bg-white text-muted-foreground hover:text-primary transition-colors flex-shrink-0 disabled:opacity-30"
-                    >
-                      <Play className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
+              {t === "azure" ? "Azure (643 voices)" : "ElevenLabs"}
+            </button>
           ))}
         </div>
+
+        {/* ── Azure tab ── */}
+        {tab === "azure" && (
+          <>
+            <div className="px-4 py-3 border-b border-border flex flex-col gap-2 flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                <input type="text" value={search} onChange={e => onSearchChange(e.target.value)}
+                  placeholder="Search by name, language or locale…"
+                  className="w-full pl-8 pr-3 py-2 text-xs border border-border rounded-lg bg-gray-50 focus:outline-none focus:border-primary"
+                />
+                {search && <button onClick={() => onSearchChange("")} className="absolute right-2.5 top-1/2 -translate-y-1/2"><X className="w-3 h-3 text-muted-foreground" /></button>}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {(["all", "Female", "Male"] as const).map(g => (
+                  <button key={g} onClick={() => onGenderChange(g)}
+                    className={cn("px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all",
+                      gender === g ? "border-primary bg-violet-50 text-primary" : "border-border bg-white text-muted-foreground hover:border-primary/40"
+                    )}
+                  >{g === "all" ? "All genders" : g}</button>
+                ))}
+                <button onClick={() => onHdOnlyChange(!hdOnly)}
+                  className={cn("px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all",
+                    hdOnly ? "border-violet-500 bg-violet-50 text-violet-700" : "border-border bg-white text-muted-foreground hover:border-primary/40"
+                  )}
+                >HD only</button>
+                <select value={locale} onChange={e => onLocaleChange(e.target.value)}
+                  className="ml-auto text-[11px] border border-border rounded-lg px-2 py-1 bg-white text-muted-foreground focus:outline-none focus:border-primary max-w-[160px]"
+                >
+                  <option value="">All languages</option>
+                  {locales.map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="overflow-y-auto flex-1 p-4 space-y-4">
+              {loading && <div className="flex items-center justify-center py-12 text-sm text-muted-foreground gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading 600+ voices…</div>}
+              {!loading && Object.keys(grouped).length === 0 && <div className="text-center py-12 text-sm text-muted-foreground">No voices match your filters</div>}
+              {!loading && Object.entries(grouped).map(([loc, vs]) => (
+                <div key={loc}>
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                    {vs[0].localeName} <span className="opacity-50">· {loc} · {vs.length} voice{vs.length !== 1 ? "s" : ""}</span>
+                  </p>
+                  <div className="space-y-1">
+                    {vs.map(v => (
+                      <div key={v.value}
+                        className={cn("flex items-center gap-3 px-3 py-2 rounded-lg border text-xs transition-all cursor-pointer hover:border-primary/40",
+                          selected === v.value ? "border-primary bg-violet-50" : "border-transparent hover:bg-gray-50"
+                        )}
+                        onClick={() => onSelect(v.value)}
+                      >
+                        <div className={cn("w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0",
+                          v.gender === "Female" ? "bg-pink-100 text-pink-600" : "bg-blue-100 text-blue-600"
+                        )}>{v.gender === "Female" ? "F" : "M"}</div>
+                        <div className="flex-1 min-w-0">
+                          <span className="font-medium text-foreground">{v.label}</span>
+                          {v.isMultilingual && <span className="ml-1.5 text-[9px] text-violet-500 bg-violet-50 px-1 rounded">Multilingual</span>}
+                        </div>
+                        {v.isHD && <Badge variant="secondary" className="text-[9px] bg-violet-100 text-violet-700 border-0 py-0 h-4">HD</Badge>}
+                        {selected === v.value && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                        <button onClick={e => { e.stopPropagation(); onPreview(v.value); }} disabled={isPreviewing}
+                          className="p-1 rounded hover:bg-white text-muted-foreground hover:text-primary transition-colors flex-shrink-0 disabled:opacity-30"
+                        ><Play className="w-3 h-3" /></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* ── ElevenLabs tab ── */}
+        {tab === "elevenlabs" && (
+          <>
+            <div className="px-4 py-3 border-b border-border flex-shrink-0">
+              {!elApiKey ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Enter your ElevenLabs API key to access your voices. Your key is saved locally and never stored on our servers.</p>
+                  <div className="flex gap-2">
+                    <input type="password" value={elKeyInput} onChange={e => onElKeyInput(e.target.value)}
+                      placeholder="sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                      className="flex-1 input text-xs font-mono"
+                      onKeyDown={e => { if (e.key === "Enter" && elKeyInput.trim()) onElKeySave(elKeyInput.trim()); }}
+                    />
+                    <Button size="sm" onClick={() => onElKeySave(elKeyInput.trim())} disabled={!elKeyInput.trim() || loadingElVoices}>
+                      {loadingElVoices ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Connect"}
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Get your key at <span className="text-primary font-medium">elevenlabs.io/app/settings/api-keys</span></p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-emerald-600 flex items-center gap-1"><Check className="w-3 h-3" /> ElevenLabs connected</span>
+                    <button onClick={() => { onElKeySave(""); }} className="text-[10px] text-muted-foreground hover:text-red-500 ml-auto">Disconnect</button>
+                  </div>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                    <input type="text" value={elSearch} onChange={e => onElSearchChange(e.target.value)}
+                      placeholder="Search voices or accent…"
+                      className="w-full pl-8 pr-3 py-2 text-xs border border-border rounded-lg bg-gray-50 focus:outline-none focus:border-primary"
+                    />
+                    {elSearch && <button onClick={() => onElSearchChange("")} className="absolute right-2.5 top-1/2 -translate-y-1/2"><X className="w-3 h-3 text-muted-foreground" /></button>}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="overflow-y-auto flex-1 p-4 space-y-1">
+              {loadingElVoices && <div className="flex items-center justify-center py-12 text-sm text-muted-foreground gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading ElevenLabs voices…</div>}
+              {!loadingElVoices && elApiKey && elVoices?.length === 0 && <div className="text-center py-12 text-sm text-muted-foreground">No voices found. Check your API key.</div>}
+              {!loadingElVoices && !elApiKey && (
+                <div className="text-center py-12 text-sm text-muted-foreground">Connect your ElevenLabs account above to see your voices.</div>
+              )}
+              {!loadingElVoices && filteredEl.map(v => {
+                const elVal = `el:${v.voice_id}`;
+                return (
+                  <div key={v.voice_id}
+                    className={cn("flex items-center gap-3 px-3 py-2 rounded-lg border text-xs transition-all cursor-pointer hover:border-orange-400/60",
+                      selected === elVal ? "border-orange-400 bg-orange-50" : "border-transparent hover:bg-gray-50"
+                    )}
+                    onClick={() => onSelect(elVal)}
+                  >
+                    <div className="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center text-[9px] font-bold text-orange-600 flex-shrink-0">EL</div>
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium text-foreground">{v.name}</span>
+                      {v.labels?.accent && <span className="ml-1.5 text-[9px] text-muted-foreground">{v.labels.accent}</span>}
+                      {v.category && <span className="ml-1.5 text-[9px] bg-orange-50 text-orange-600 px-1 rounded">{v.category}</span>}
+                    </div>
+                    {selected === elVal && <Check className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />}
+                    <button onClick={e => { e.stopPropagation(); onPreview(elVal); }} disabled={isPreviewing}
+                      className="p-1 rounded hover:bg-white text-muted-foreground hover:text-orange-500 transition-colors flex-shrink-0 disabled:opacity-30"
+                    ><Play className="w-3 h-3" /></button>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
 
         {/* Footer */}
         <div className="p-4 border-t border-border flex-shrink-0">
@@ -300,12 +391,20 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
 
   // Voice browser modal
   const [showVoiceBrowser, setShowVoiceBrowser] = useState(false);
+  const [voiceBrowserTab, setVoiceBrowserTab] = useState<"azure" | "elevenlabs">("azure");
   const [allVoices, setAllVoices] = useState<VoiceEntry[] | null>(null);
   const [loadingVoices, setLoadingVoices] = useState(false);
   const [voiceSearch, setVoiceSearch] = useState("");
   const [voiceGender, setVoiceGender] = useState<"all" | "Female" | "Male">("all");
   const [voiceLocale, setVoiceLocale] = useState("");
   const [voiceHdOnly, setVoiceHdOnly] = useState(false);
+
+  // ElevenLabs
+  const [elApiKey, setElApiKey] = useState(getElKey);
+  const [elVoices, setElVoices] = useState<ElVoice[] | null>(null);
+  const [loadingElVoices, setLoadingElVoices] = useState(false);
+  const [elVoiceSearch, setElVoiceSearch] = useState("");
+  const [elKeyInput, setElKeyInput] = useState(getElKey);
 
   // Custom photo upload (presenter badge in video)
   const [customPhotoUrl, setCustomPhotoUrl] = useState<string | null>(null);
@@ -364,6 +463,32 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
     }
   }
 
+  async function fetchElVoices(key: string) {
+    if (!key.trim()) return;
+    setLoadingElVoices(true);
+    setElVoices(null);
+    try {
+      const res = await fetch("/api/elevenlabs/voices", {
+        headers: { "x-elevenlabs-key": key.trim() },
+      });
+      const data = await res.json() as ElVoice[] | { error: string };
+      if (!res.ok) throw new Error((data as { error: string }).error ?? `HTTP ${res.status}`);
+      setElVoices(data as ElVoice[]);
+    } catch (err) {
+      setElVoices([]);
+      console.error("ElevenLabs voices error:", err);
+    } finally {
+      setLoadingElVoices(false);
+    }
+  }
+
+  function saveElApiKey(key: string) {
+    setElApiKey(key);
+    setElKeyInput(key);
+    localStorage.setItem(EL_KEY_LS, key);
+    if (key.trim()) fetchElVoices(key.trim());
+  }
+
   async function handlePhotoUpload(file: File) {
     setUploadingPhoto(true);
     setCustomPhotoPreview(URL.createObjectURL(file));
@@ -392,20 +517,24 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
     setIsPreviewing(true);
     setPreviewError(null);
     try {
-      const res = await fetch("/api/preview-voice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voice }),
-      });
+      const isEl = voice.startsWith("el:");
+      const url = isEl ? "/api/elevenlabs/preview" : "/api/preview-voice";
+      const body = isEl
+        ? JSON.stringify({ voiceId: voice.slice(3) })
+        : JSON.stringify({ voice });
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (isEl && elApiKey) headers["x-elevenlabs-key"] = elApiKey;
+
+      const res = await fetch(url, { method: "POST", headers, body });
       if (!res.ok) {
         const err = await res.json() as { error?: string };
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+      const objUrl = URL.createObjectURL(blob);
+      const audio = new Audio(objUrl);
       audioRef.current = audio;
-      audio.onended = () => { setIsPreviewing(false); URL.revokeObjectURL(url); };
+      audio.onended = () => { setIsPreviewing(false); URL.revokeObjectURL(objUrl); };
       audio.onerror = () => { setIsPreviewing(false); };
       await audio.play();
     } catch (err) {
@@ -415,6 +544,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   }
 
   function buildPayload(): Record<string, unknown> {
+    const isEl = voice.startsWith("el:");
     const base = {
       topic: topic.trim(), platform, scriptStyle,
       avatar, avatarStyle, voice,
@@ -423,6 +553,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       realism,
       pacing,
       customPhotoUrl: customPhotoUrl || undefined,
+      elevenLabsKey: isEl && elApiKey ? elApiKey : undefined,
     };
 
     if (brandMode === "saved" && hasBrand) {
@@ -854,25 +985,40 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             <SLabel>Voice</SLabel>
 
             {/* Current voice chip + browse button */}
-            <div className="flex items-center gap-3 p-3 bg-gray-50 border border-border rounded-xl">
-              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <Mic2 className="w-4 h-4 text-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground truncate">
-                  {QUICK_VOICES.find(v => v.value === voice)?.label ?? voice.split("-").slice(2).join("-").replace(/Neural$/, "")}
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  {QUICK_VOICES.find(v => v.value === voice)?.desc ?? voice.split("-").slice(0, 2).join("-")}
-                </p>
-              </div>
-              {QUICK_VOICES.find(v => v.value === voice)?.isHD && (
-                <Badge variant="secondary" className="text-[10px] bg-violet-100 text-violet-700 border-0 flex-shrink-0">HD</Badge>
-              )}
-              <Button size="sm" variant="outline" className="gap-1.5 text-xs flex-shrink-0" onClick={fetchAllVoices}>
-                <Globe className="w-3.5 h-3.5" /> Browse all
-              </Button>
-            </div>
+            {(() => {
+              const isEl = voice.startsWith("el:");
+              const elId = isEl ? voice.slice(3) : null;
+              const elVoice = elId ? elVoices?.find(v => v.voice_id === elId) : null;
+              const azureVoice = !isEl ? QUICK_VOICES.find(v => v.value === voice) : null;
+              return (
+                <div className={cn("flex items-center gap-3 p-3 border rounded-xl", isEl ? "bg-orange-50 border-orange-200" : "bg-gray-50 border-border")}>
+                  <div className={cn("w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0", isEl ? "bg-orange-100" : "bg-primary/10")}>
+                    <Mic2 className={cn("w-4 h-4", isEl ? "text-orange-500" : "text-primary")} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {isEl
+                        ? (elVoice?.name ?? `ElevenLabs voice`)
+                        : (azureVoice?.label ?? voice.split("-").slice(2).join("-").replace(/Neural$/, ""))
+                      }
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {isEl
+                        ? (elVoice?.labels?.accent ? `ElevenLabs · ${elVoice.labels.accent}` : "ElevenLabs")
+                        : (azureVoice?.desc ?? voice.split("-").slice(0, 2).join("-"))
+                      }
+                    </p>
+                  </div>
+                  {isEl && <Badge variant="secondary" className="text-[10px] bg-orange-100 text-orange-600 border-0 flex-shrink-0">EL</Badge>}
+                  {!isEl && azureVoice?.isHD && <Badge variant="secondary" className="text-[10px] bg-violet-100 text-violet-700 border-0 flex-shrink-0">HD</Badge>}
+                  <Button size="sm" variant="outline" className="gap-1.5 text-xs flex-shrink-0"
+                    onClick={() => { setVoiceBrowserTab(isEl ? "elevenlabs" : "azure"); fetchAllVoices(); }}
+                  >
+                    <Globe className="w-3.5 h-3.5" /> Browse all
+                  </Button>
+                </div>
+              );
+            })()}
 
             {/* Quick-select popular voices */}
             <div>
@@ -1002,8 +1148,8 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       {/* ──────────────────── VOICE BROWSER MODAL ──────────────────── */}
       {showVoiceBrowser && (
         <VoiceBrowserModal
-          voices={allVoices}
-          loading={loadingVoices}
+          tab={voiceBrowserTab} onTabChange={setVoiceBrowserTab}
+          voices={allVoices} loading={loadingVoices}
           selected={voice}
           search={voiceSearch} onSearchChange={setVoiceSearch}
           gender={voiceGender} onGenderChange={setVoiceGender}
@@ -1012,22 +1158,31 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
           onSelect={(v) => { handleVoiceChange(v); setShowVoiceBrowser(false); }}
           onClose={() => setShowVoiceBrowser(false)}
           onPreview={(v) => {
-            const savedVoice = voice;
-            setVoice(v);
             stopPreview();
             setIsPreviewing(true);
             setPreviewError(null);
-            fetch("/api/preview-voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voice: v }) })
+            const isEl = v.startsWith("el:");
+            const url = isEl ? "/api/elevenlabs/preview" : "/api/preview-voice";
+            const body = isEl ? JSON.stringify({ voiceId: v.slice(3) }) : JSON.stringify({ voice: v });
+            const headers: Record<string, string> = { "Content-Type": "application/json" };
+            if (isEl && elApiKey) headers["x-elevenlabs-key"] = elApiKey;
+            fetch(url, { method: "POST", headers, body })
               .then(r => r.blob()).then(blob => {
-                const url = URL.createObjectURL(blob);
-                const audio = new Audio(url);
+                const objUrl = URL.createObjectURL(blob);
+                const audio = new Audio(objUrl);
                 audioRef.current = audio;
-                audio.onended = () => { setIsPreviewing(false); URL.revokeObjectURL(url); setVoice(savedVoice); };
+                audio.onended = () => { setIsPreviewing(false); URL.revokeObjectURL(objUrl); };
                 return audio.play();
               })
-              .catch(() => { setIsPreviewing(false); setVoice(savedVoice); });
+              .catch(() => setIsPreviewing(false));
           }}
           isPreviewing={isPreviewing}
+          elApiKey={elApiKey}
+          elKeyInput={elKeyInput} onElKeyInput={setElKeyInput}
+          onElKeySave={saveElApiKey}
+          elVoices={elVoices} loadingElVoices={loadingElVoices}
+          elSearch={elVoiceSearch} onElSearchChange={setElVoiceSearch}
+          onFetchElVoices={fetchElVoices}
         />
       )}
 
@@ -1043,7 +1198,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   { label: "Platform", value: platform },
                   { label: "Style", value: SCRIPT_STYLES.find((s) => s.value === scriptStyle)?.label ?? scriptStyle },
                   { label: "Avatar", value: `${AVATARS[avatar]?.label ?? avatar} · ${avatarStyle.replace(/-/g, " ")}` },
-                  { label: "Voice", value: QUICK_VOICES.find((v) => v.value === voice)?.label ?? voice.split("-").slice(2).join("-").replace(/Neural$/, "") },
+                  { label: "Voice", value: voice.startsWith("el:") ? (elVoices?.find(v => v.voice_id === voice.slice(3))?.name ?? "ElevenLabs voice") + " (ElevenLabs)" : (QUICK_VOICES.find((v) => v.value === voice)?.label ?? voice.split("-").slice(2).join("-").replace(/Neural$/, "")) },
                   { label: "Captions", value: CAPTION_STYLES.find((c) => c.value === captionStyle)?.label ?? captionStyle },
                   { label: "Brand", value: brandMode === "saved" ? brand.companyName : `Custom · ${selectedPreset?.label ?? scenePreset}` },
                   { label: "Quality", value: realism ? `Realism Mode · ${PACING_OPTIONS.find(p => p.value === pacing)?.label} pace` : "Draft Mode" },

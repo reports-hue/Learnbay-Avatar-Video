@@ -41,7 +41,7 @@ artifacts/
 - `src/pages/BrandSettings.tsx` — AI website analyzer (POST /api/analyze-brand), company identity, visual identity (logo, 3 colors, color strip preview), default video settings
 - `src/lib/storage.ts` — `useBrandProfile`, `useVideoLibrary` hooks (localStorage-backed)
 - `src/lib/types.ts` — `BrandProfile`, `VideoEntry`, `BrandAnalysisResult`, `Page`
-- `src/lib/config.ts` — `PLATFORMS`, `SCRIPT_STYLES`, `AVATARS`, `VOICES`, `VOICE_STYLES`, `CAPTION_STYLES`, `SCENE_PRESETS`
+- `src/lib/config.ts` — `PLATFORMS`, `SCRIPT_STYLES`, `AVATARS`, `QUICK_VOICES`, `VOICE_STYLES`, `CAPTION_STYLES`, `SCENE_PRESETS`
 
 ### Features
 
@@ -52,7 +52,9 @@ artifacts/
 | **Avatar Synthesis** | Azure AI Avatar Batch Synthesis API (PUT + poll). Always uses SSML with prosody rate/pitch, sentence boundary silence, breathing breaks. Green screen (`#00FF00FF`) bg for chroma key. |
 | **Chroma Key Compositing** | `chromakey=color=0x00ff00:similarity=0.25:blend=0.05` — avatar edges blend naturally into scene |
 | **Voice Pacing** | 3-level Pacing slider: Slow (0.88×), Natural (0.95×), Fast (1.05×). Maps to SSML `<prosody rate>`. |
-| **Voice Preview** | `POST /api/preview-voice` — generates 5s TTS sample via Azure TTS REST API, returns MP3 for inline browser playback |
+| **Voice Preview** | `POST /api/preview-voice` (Azure) or `POST /api/elevenlabs/preview` (ElevenLabs) — 5s TTS sample returned as MP3 |
+| **ElevenLabs Voices** | Optional: user enters their ElevenLabs API key in Voice Browser → stored in localStorage. Voices fetched from ElevenLabs API, prefixed `el:voiceId` in state. Full 643-voice Azure browser + ElevenLabs library in a tabbed modal. |
+| **ElevenLabs TTS** | When `voice` starts with `el:`, `synthesizeElevenLabs()` calls `/v1/text-to-speech/{id}/with-timestamps`, saves MP3 to `outputs/`, constructs public URL using `REPLIT_DEV_DOMAIN`, passes to Azure Avatar as `inputKind: "PreSynthesizedAudio"`. ElevenLabs character-alignment → `WordTiming[]` for captions. |
 | **Word-by-Word Captions** | SSML-based word timings with micro-rate variation per sentence, `express-as style="chat"`. 3-word sliding window. Pill background (BorderStyle=3, BackColour semi-transparent). |
 | **Opening Hook Text** | First sentence displayed 0–2s with fade-out via ASS subtitles at top of frame (no drawtext needed) |
 | **Audio Enhancement** | `loudnorm=I=-16:TP=-1.5:LRA=11` (broadcast -16 LUFS) + `aecho=0.8:0.9:40:0.3` (subtle room reverb). Music at 6% with afade in/out. |
@@ -68,8 +70,10 @@ artifacts/
 
 - `src/services/openai.ts` — Natural human-speech script prompts, `generateScript()`, `generateBrandTheme()`, `analyzeBrand()`
 - `src/services/speech.ts` — SSML-based `getWordTimings()` with `speakSsmlAsync`, micro-rate variation, emphasis for CAPS, chat style, estimation fallback
-- `src/services/avatarService.ts` — `generateAvatarVideo()` with full SSML (breathing breaks, prosody, silence, express-as), green screen in realism mode
+- `src/services/avatarService.ts` — `generateAvatarVideo()`: SSML or `PreSynthesizedAudio` (ElevenLabs), green screen in realism mode
+- `src/services/elevenLabsService.ts` — `listElevenLabsVoices()`, `synthesizeElevenLabs()` (with-timestamps → saves MP3 + word timings), `previewElevenLabsVoice()`
 - `src/services/ffmpegService.ts` — Full post-processing: chroma key, Ken Burns, color grade, grain, hook text, 3-word captions, audio loudnorm, thumbnail extraction
+- `src/routes/voices.ts` — `GET /api/voices` (Azure, 1hr cache), `GET /api/elevenlabs/voices` (ElevenLabs, x-elevenlabs-key header), `POST /api/elevenlabs/preview`, `POST /api/upload-photo`
 - `src/routes/generate.ts` — `POST /api/generate` (SSE), `GET /api/video/:filename`, `POST /api/preview-voice`
 
 ### FFmpeg Filter Graph (order, Realism Mode)
@@ -98,7 +102,8 @@ artifacts/
 
 - Endpoint: `https://{AZURE_SPEECH_REGION}.api.cognitive.microsoft.com/avatar/batchsyntheses/{jobId}?api-version=2024-04-15-preview`
 - Method: PUT to create, GET to poll
-- Always uses `inputKind: "SSML"` — includes prosody, breathing breaks, express-as chat, sentence silence
+- `inputKind: "SSML"` for Azure TTS voices (prosody, breathing, express-as, sentence silence)
+- `inputKind: "PreSynthesizedAudio"` + `audioUrl` when using ElevenLabs voices
 - Green screen background `#00FF00FF` when `realism=true` (default)
 - Poll interval: 6s, max wait: 25min
 

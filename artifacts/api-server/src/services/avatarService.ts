@@ -26,6 +26,8 @@ export interface AvatarJobConfig {
   bgImageUrl?: string;
   pacing?: PacingRate;
   realism?: boolean;
+  // When set, use pre-synthesized audio (e.g. ElevenLabs) instead of Azure TTS
+  audioUrl?: string;
 }
 
 // Supported SSML speaking styles per Azure TTS voice
@@ -134,13 +136,25 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
     avatarConfig["backgroundImage"] = { url: config.bgImageUrl, fileName: "background.jpg" };
   }
 
-  // Always use SSML for maximum realism with smooth head movement
-  const ssml = buildSsml(config.script, config.voice, config.voiceStyle, config.pacing ?? "natural");
-  const requestBody: Record<string, unknown> = {
-    avatarConfig,
-    inputKind: "SSML",
-    inputs: [{ content: ssml }],
-  };
+  let requestBody: Record<string, unknown>;
+
+  if (config.audioUrl) {
+    // Pre-synthesized audio mode (e.g. ElevenLabs) — avatar lip-syncs to external audio
+    logger.info({ audioUrl: config.audioUrl }, "Using PreSynthesizedAudio mode");
+    requestBody = {
+      avatarConfig,
+      inputKind: "PreSynthesizedAudio",
+      inputs: [{ audioUrl: config.audioUrl }],
+    };
+  } else {
+    // Default: SSML with Azure TTS
+    const ssml = buildSsml(config.script, config.voice, config.voiceStyle, config.pacing ?? "natural");
+    requestBody = {
+      avatarConfig,
+      inputKind: "SSML",
+      inputs: [{ content: ssml }],
+    };
+  }
 
   logger.info({ jobId, character: config.character, style: config.style, voice: config.voice, pacing: config.pacing, realism: config.realism !== false, bgColor: effectiveBgColor }, "Submitting avatar synthesis job");
 

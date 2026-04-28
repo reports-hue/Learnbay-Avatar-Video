@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { v4 as uuidv4 } from "uuid";
 import { logger } from "../lib/logger.js";
+import { listElevenLabsVoices, previewElevenLabsVoice } from "../services/elevenLabsService.js";
 
 const router: IRouter = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -115,6 +116,46 @@ router.post("/upload-photo", upload.single("photo"), (req: Request, res: Respons
   const photoUrl = `/api/video/${req.file.filename}`;
   logger.info({ filename: req.file.filename }, "Photo uploaded");
   res.json({ photoUrl, filename: req.file.filename, localPath: req.file.path });
+});
+
+// ─── GET /api/elevenlabs/voices ──────────────────────────────────
+router.get("/elevenlabs/voices", async (req: Request, res: Response) => {
+  const apiKey = (req.headers["x-elevenlabs-key"] as string) || process.env.ELEVENLABS_API_KEY || "";
+  if (!apiKey) {
+    res.status(400).json({ error: "ElevenLabs API key required. Pass it in x-elevenlabs-key header." });
+    return;
+  }
+  try {
+    const voices = await listElevenLabsVoices(apiKey);
+    res.json(voices);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ err }, "Failed to fetch ElevenLabs voices");
+    const isAuthError = msg.includes("401") || msg.includes("Unauthorized");
+    res.status(isAuthError ? 401 : 500).json({
+      error: isAuthError ? "Invalid ElevenLabs API key" : `Failed to fetch voices: ${msg}`,
+    });
+  }
+});
+
+// ─── POST /api/elevenlabs/preview ────────────────────────────────
+router.post("/elevenlabs/preview", async (req: Request, res: Response) => {
+  const { voiceId } = req.body as { voiceId?: string };
+  const apiKey = (req.headers["x-elevenlabs-key"] as string) || process.env.ELEVENLABS_API_KEY || "";
+  if (!apiKey || !voiceId) {
+    res.status(400).json({ error: "voiceId and ElevenLabs API key required" });
+    return;
+  }
+  try {
+    const audioBuffer = await previewElevenLabsVoice(voiceId, apiKey);
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(audioBuffer);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ err }, "ElevenLabs preview failed");
+    res.status(500).json({ error: `Preview failed: ${msg}` });
+  }
 });
 
 export default router;
