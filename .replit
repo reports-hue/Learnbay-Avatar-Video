@@ -30,3 +30,8 @@ externalPort = 8081
 [[ports]]
 localPort = 24396
 externalPort = 3001
+
+[userenv]
+
+[userenv.shared]
+AZURE_IMAGE_ENDPOINT = "https://aadit-moiwmhiq-swedencentral.cognitiveservices.azure.com"
