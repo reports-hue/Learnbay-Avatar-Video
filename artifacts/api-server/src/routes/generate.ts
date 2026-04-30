@@ -275,6 +275,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     // return graceful empties on error, but we still wrap in try/catch
     // for absolute safety.
     let brollResources: import("../services/brollEngine.js").BrollResource[] = [];
+    let statPopinSegments: import("../services/scriptSegmenter.js").Segment[] = [];
     if (wordTimings.length > 0) {
       try {
         const brollIsVertical = VERTICAL_PLATFORMS.has(platform);
@@ -289,16 +290,39 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
             duration: avatarDurationSec,
           });
           if (plan.segments.length > 0) {
-            updateJob(jobId, {
-              step: "broll_fetch",
-              percent: 80,
-              message: `Fetching ${plan.segments.length} b-roll clip(s)…`,
-            });
-            brollResources = await fetchBrollResources({
-              segments: plan.segments,
-              isVertical: brollIsVertical,
-              cacheDir: path.join(outputsDir, "cache", "pexels"),
-            });
+            // T204: split the segmenter plan — stat-popin segments are
+            // rendered by the premium stat-popin engine (multi-layer ASS),
+            // broll-* segments by the Pexels b-roll engine. Both pipelines
+            // share the same plan but emit independent ASS/filter graphs.
+            statPopinSegments = plan.segments.filter((s) => s.mode === "stat-popin");
+            const brollSegments = plan.segments.filter(
+              (s) => s.mode === "broll-pip" || s.mode === "broll-fullscreen"
+            );
+            if (brollSegments.length > 0) {
+              updateJob(jobId, {
+                step: "broll_fetch",
+                percent: 80,
+                message: `Fetching ${brollSegments.length} b-roll clip(s)…`,
+              });
+              brollResources = await fetchBrollResources({
+                segments: brollSegments,
+                isVertical: brollIsVertical,
+                cacheDir: path.join(outputsDir, "cache", "pexels"),
+              });
+            }
+            if (statPopinSegments.length > 0) {
+              logger.info(
+                {
+                  jobId,
+                  count: statPopinSegments.length,
+                  sample: statPopinSegments.slice(0, 3).map((s) => ({
+                    start: s.startSec,
+                    text: s.emphasisText,
+                  })),
+                },
+                "Stat-popin segments scheduled (T204)"
+              );
+            }
           }
         }
       } catch (brollErr) {
@@ -308,6 +332,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
           "B-roll planning failed; continuing render without cutaways"
         );
         brollResources = [];
+        statPopinSegments = [];
       }
     }
 
@@ -331,6 +356,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       script,
       elAudioPath,
       brollResources: brollResources.length > 0 ? brollResources : undefined,
+      statPopinSegments: statPopinSegments.length > 0 ? statPopinSegments : undefined,
     });
 
     // Persist b-roll attribution audit trail (license compliance).

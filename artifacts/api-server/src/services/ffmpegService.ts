@@ -29,6 +29,11 @@ import {
   buildBrollFullscreenFilter,
   type BrollResource,
 } from "./brollEngine.js";
+import {
+  buildStatPopinLockoutWindows,
+  generateStatPopinAss,
+} from "./statPopinService.js";
+import type { Segment } from "./scriptSegmenter.js";
 
 /**
  * Select an ffmpeg binary that supports the full filter set we need.
@@ -712,6 +717,17 @@ export interface PostProcessOptions {
    * via `[N:v]` only).
    */
   brollResources?: BrollResource[];
+  /**
+   * Premium animated stat-popin segments (T204). Each segment carries a
+   * window + the exact emphasis text (e.g., "70%", "$2.5M", "10x"). The
+   * statPopinService renders a multi-layer ASS composition (animated pill +
+   * count-up number + suffix + icon + underline + particle burst) for each.
+   * Stat windows automatically lock out T103 numeric callouts in the same
+   * window so the same stat is never rendered twice.
+   * On any failure, this is silently dropped and the legacy T103 callouts
+   * still fire — render is never blocked.
+   */
+  statPopinSegments?: Segment[];
 }
 
 export async function postProcessAvatarVideo(
@@ -838,21 +854,75 @@ export async function postProcessAvatarVideo(
     await generateHookAssFile(options.script, hookAssPath, outW, outH, accentColor);
   }
 
+  // ── Premium stat-popin ASS (T204): multi-layer animated stat callouts ──
+  // Generated FIRST so we can derive lockout windows for the legacy T103
+  // numeric callouts below — same stat must never be rendered twice. Any
+  // failure here drops back to T103 only. ASS file is multi-layer: pill +
+  // count-up number + suffix + icon + underline + particle burst.
+  let statPopinAssPath: string | null = null;
+  let statPopinLockouts: Array<[number, number]> = [];
+  const statPopinSegments = options.statPopinSegments ?? [];
+  if (statPopinSegments.length > 0) {
+    try {
+      const candidatePath = path.join(outputsDir, "statpopin.ass");
+      const wrote = await generateStatPopinAss({
+        segments: statPopinSegments,
+        outputPath: candidatePath,
+        w: outW,
+        h: outH,
+        accentColor,
+      });
+      if (wrote) {
+        statPopinAssPath = candidatePath;
+        statPopinLockouts = buildStatPopinLockoutWindows(statPopinSegments);
+        logger.info(
+          {
+            count: statPopinSegments.filter((s) => s.mode === "stat-popin").length,
+            sample: statPopinSegments
+              .filter((s) => s.mode === "stat-popin")
+              .slice(0, 3)
+              .map((s) => ({ start: s.startSec, text: s.emphasisText })),
+          },
+          "Stat-popin ASS generated (T204)"
+        );
+      }
+    } catch (err) {
+      const m = (err as { message?: string })?.message ?? String(err);
+      logger.warn({ err: m.slice(0, 200) }, "Stat-popin ASS generation failed; continuing");
+      statPopinAssPath = null;
+      statPopinLockouts = [];
+    }
+  }
+
   // ── Numeric callouts ASS (pop-in stat emphasis) ──
   // Always-on whenever we have word timings. Detection is highly curated, so
   // scripts without stats simply produce zero callouts and the file is empty.
+  // Windows already covered by T204 stat-popin are filtered out so the same
+  // stat is never double-rendered (T204 takes priority — it's strictly better).
   let calloutsAssPath: string | null = null;
   if (wordTimings.length > 0) {
-    const callouts = findNumericCallouts(wordTimings);
+    const allCallouts = findNumericCallouts(wordTimings);
+    const callouts = allCallouts.filter((c) => {
+      // Drop callout if its midpoint falls inside any stat-popin lockout window.
+      const mid = (c.startSec + c.endSec) / 2;
+      return !statPopinLockouts.some(([a, b]) => mid >= a && mid <= b);
+    });
     if (callouts.length > 0) {
       calloutsAssPath = path.join(outputsDir, "callouts.ass");
       await generateNumericCalloutsAss(callouts, calloutsAssPath, outW, outH, accentColor);
       logger.info(
-        { count: callouts.length, sample: callouts.slice(0, 3).map((c) => c.text) },
+        {
+          count: callouts.length,
+          suppressedByStatPopin: allCallouts.length - callouts.length,
+          sample: callouts.slice(0, 3).map((c) => c.text),
+        },
         "Numeric callouts ASS generated"
       );
     } else {
-      logger.info("No numeric callouts detected in script");
+      logger.info(
+        { suppressedByStatPopin: allCallouts.length },
+        "No numeric callouts to render (or all suppressed by T204 stat-popin)"
+      );
     }
   }
 
@@ -1414,6 +1484,17 @@ export async function postProcessAvatarVideo(
       const escaped = calloutsAssPath.replace(/\\/g, "/").replace(/:/g, "\\:");
       fp.push(`[${lastV}]subtitles='${escaped}'[with_callouts]`);
       lastV = "with_callouts";
+    }
+
+    // ── 9c. Premium stat-popin (T204): multi-layer animated stat callouts ──
+    // Sits above legacy T103 callouts in the chain (though they won't co-
+    // occur — T204 windows are pre-filtered out of T103 above). Composition:
+    // pill (scale-in) + count-up number + suffix pop + icon spin-in +
+    // underline draw + 8-particle radial burst + hold + fade-out.
+    if (statPopinAssPath) {
+      const escaped = statPopinAssPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+      fp.push(`[${lastV}]subtitles='${escaped}'[with_statpop]`);
+      lastV = "with_statpop";
     }
 
     // ── 10. CTA text in lower-third (only when outro card is NOT active) ──
