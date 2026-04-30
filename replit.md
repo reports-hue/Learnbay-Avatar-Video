@@ -59,7 +59,7 @@ artifacts/
 | **Opening Hook Text** | First sentence displayed 0–2s with fade-out via ASS subtitles at top of frame (no drawtext needed) |
 | **Audio Enhancement** | Source-aware: ElevenLabs (studio audio) → lighter `loudnorm=I=-14:TP=-1.0:LRA=9` only, no aecho (preserves studio mastering). Azure TTS (dry) → `loudnorm=I=-16:TP=-1.5:LRA=11` + `aecho=0.8:0.9:40:0.3` for room presence. Music at 6% with afade in/out. Output: 48 kHz / 192 kbps AAC. |
 | **Lip-Sync Time-Stretch** | When ElevenLabs audio is used, ffprobe both Azure avatar video and ElevenLabs MP3, then apply `setpts=PTS*ratio` to the avatar video so its duration matches the ElevenLabs track. Ratio clamped 0.7–1.4. Greatly tightens overall sync; per-word drift between the two TTS engines remains. |
-| **Premium Encoding** | Azure avatar source: 8000 kbps H.264. Final output: libx264 `preset medium / crf 18 / profile high / level 4.1`, 2-second GOP (`-g 60 -keyint_min 60`), AAC 192 kbps @ 48 kHz, `+faststart` for instant web playback. |
+| **Premium Encoding** | Azure avatar source: 6000 kbps H.264 (Azure rejects >6000 with `Video bitrate Xk is not allowed`). Final output: libx264 `preset medium / crf 18 / profile high / level 4.1`, 2-second GOP (`-g 60 -keyint_min 60`), AAC 192 kbps @ 48 kHz, `+faststart` for instant web playback. |
 | **Color Grade** | `eq=brightness=0.02:saturation=1.1:contrast=1.05` — makes it look camera-shot |
 | **Film Grain** | `noise=alls=4:allf=t+u` — organic texture, removes digital-sterile appearance |
 | **Ken Burns Effect** | Background scaled 3% up, slow crop pan: `crop=W:H:x='min(iw-ow,(iw-ow)*t/DUR)':y='(ih-oh)/2'` |
