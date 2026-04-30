@@ -1,7 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { existsSync, readdirSync, statSync } from "fs";
+import { existsSync, readdirSync, statSync, unlinkSync } from "fs";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
 import { logger } from "../lib/logger.js";
@@ -163,7 +163,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
           resolvedBgColor1,
           resolvedBgColor2 ?? resolvedBgColor1,
           platform,
-          `bg_${videoId}.png`
+          `bg_${videoId}.jpg`
         );
         logger.info({ aiBgImagePath }, "AI background image ready");
       } catch (err) {
@@ -344,6 +344,40 @@ router.get("/videos", (_req: Request, res: Response) => {
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
+});
+
+// ─── DELETE /api/videos/:videoId — remove MP4 + thumbnail from disk ──
+router.delete("/videos/:videoId", (req: Request, res: Response) => {
+  const rawId = Array.isArray(req.params["videoId"])
+    ? req.params["videoId"][0]
+    : req.params["videoId"];
+  // Sanitise: only allow [a-z0-9_-] to prevent path traversal
+  const videoId = (rawId ?? "").replace(/[^a-zA-Z0-9_-]/g, "");
+  if (!videoId) {
+    res.status(400).json({ error: "Invalid videoId" });
+    return;
+  }
+  const targets = [
+    path.join(outputsDir, `video_${videoId}.mp4`),
+    path.join(outputsDir, `thumb_${videoId}.jpg`),
+  ];
+  const removed: string[] = [];
+  for (const p of targets) {
+    if (existsSync(p)) {
+      try {
+        unlinkSync(p);
+        removed.push(path.basename(p));
+      } catch (err) {
+        req.log.warn({ err, p }, "Failed to delete file");
+      }
+    }
+  }
+  if (removed.length === 0) {
+    res.status(404).json({ error: "Video not found", videoId });
+    return;
+  }
+  req.log.info({ videoId, removed }, "Deleted video files");
+  res.json({ ok: true, videoId, removed });
 });
 
 // ─── GET /api/jobs/:jobId — poll job status ───────────────────────

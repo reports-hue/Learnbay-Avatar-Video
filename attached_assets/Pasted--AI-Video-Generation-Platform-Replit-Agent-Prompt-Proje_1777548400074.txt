@@ -1,0 +1,101 @@
+# AI Video Generation Platform — Replit Agent Prompt
+
+## Project Overview
+Build a full-stack AI video generation platform that produces short-form vertical videos (9:16, 1080x1920) for YouTube Shorts, Reels, and TikTok. The platform uses Azure services exclusively for all AI processing. Users input a topic/script, pick a voice, and receive a polished final video with a talking avatar, synced captions, cinematic AI background, background music, hook text, and CTA overlay — all fully automated.
+
+## Tech Stack
+- Frontend: React + TypeScript + Vite
+- Backend: Node.js + Express + TypeScript
+- Avatar: Azure Talking Avatar Batch Synthesis API (api-version=2024-04-15-preview)
+- TTS & Word Timing: Azure Speech SDK (microsoft-cognitiveservices-speech-sdk) with word boundary events
+- Background Images: Azure OpenAI gpt-image-1 (JPEG output only)
+- Voice: Azure Neural TTS (en-US-AvaMultilingualNeural, en-US-AndrewMultilingualNeural as defaults)
+- Video Compositing: FFmpeg
+
+---
+
+## HARD RULES — DO NOT VIOLATE UNDER ANY CIRCUMSTANCES
+
+### Caption Sync (Root cause of fast/slow captions)
+- NEVER split captions by character count or fixed duration or WPM estimate
+- USE Azure Speech SDK synthesis with word boundary callbacks to get exact per-word timestamps (audioOffset in ticks → divide by 10,000,000 to get seconds)
+- GROUP words into caption chunks of 3–5 words max. Each chunk start time = first word audioOffset. End time = last word audioOffset + last word duration
+- WRITE these real timestamps into the ASS subtitle file — every dialogue line must have timestamps from SDK data
+
+### Lip-Sync
+- NEVER use PreSynthesizedAudio input kind — Azure removed support for this
+- ALWAYS use SSML input for avatar synthesis for perfect lip-sync
+- NEVER try to fix ElevenLabs lip-sync drift by time-stretching — only total duration improves, not per-word alignment
+- ALWAYS show warning banner when ElevenLabs voice is selected: "Lip-sync will drift 50–150ms per word. Use Azure HD voice for perfect sync."
+- Avatar API request body must be flat JSON — NO "payload" wrapper
+- Use api-version=2024-04-15-preview only
+
+### Azure API Constraints
+- NEVER send output_compression to gpt-image-1 — Azure rejects it
+- NEVER request PNG from gpt-image-1 — always JPEG
+- NEVER set avatar bitrate above 4000 kbps — Azure rejects higher values
+- NEVER change avatar API version without testing
+- NEVER log full axios error objects — they expose API keys. Log status + message only
+- ALWAYS redact Authorization, api-key, xi-api-key, Ocp-Apim-Subscription-Key from all logs
+
+### FFmpeg Output Quality
+- Output: -preset fast -crf 18 -profile:v high -level 4.1 -g 60 -keyint_min 60
+- Audio: -c:a aac -b:a 192k -ar 48000
+- NEVER use preset medium or slower — render becomes 3–5x longer and user thinks it crashed
+- NEVER draw a horizontal accent bar across the bottom of the frame
+- Chroma key: similarity=0.30, blend=0.10, plus despill filter
+- NEVER apply aecho reverb to ElevenLabs audio — only to Azure TTS
+- Caption style: BorderStyle 1 (outline only — NEVER BorderStyle 3 which adds opaque box)
+
+### Visual Quality — Backgrounds
+- Background image prompts MUST include: "ultra-wide shot, golden hour lighting, shallow depth of field, 8K photorealistic, hyper-detailed, no text, no people"
+- ALWAYS match background scene to video topic:
+  - Tech → futuristic office or neon city
+  - Finance → marble desk or skyline
+  - Fitness → gym or outdoor sunrise
+  - Lifestyle → minimal aesthetic apartment
+
+---
+
+## REQUIRED FEATURES
+
+### Caption System
+1. Integrate Azure Speech SDK word boundary events during TTS synthesis
+2. Collect per-word timestamps: { word, startSeconds, durationSeconds }
+3. Group into 3–5 word chunks with real start/end times
+4. Generate ASS subtitle file using these timestamps
+5. Max 5 words per caption line, white bold text, pill background, no box
+
+### Progress Indicator
+- Poll /api/jobs/:id every 3 seconds during generation
+- Show current stage in UI: "Generating script → Synthesizing voice → Rendering avatar → Compositing video → Done"
+- Never let the page look frozen during the 2–4 minute generation window
+
+### Video Library — State & Recovery
+- On Library mount: fetch /api/videos, add any server videos missing from localStorage (auto-recovery)
+- Maintain tombstone list in localStorage key "lm.deletedVideoIds"
+- Skip tombstoned IDs during auto-recovery — deleted videos must stay deleted
+- Implement DELETE /api/videos/:id endpoint: removes MP4 + thumbnail from disk, adds ID to server-side deleted list
+- Show "Recovered N video(s)" banner when auto-recovery finds new videos
+
+### ElevenLabs Auto-Connect
+- Store ELEVENLABS_API_KEY as server env secret
+- Expose GET /api/elevenlabs/status → { hasServerKey: boolean }
+- Expose GET /api/elevenlabs/voices → uses server key as fallback
+- On page load: auto-fetch status, if hasServerKey=true auto-load voices and show "ElevenLabs auto-connected" badge
+- User should never need to manually paste the API key
+
+### Voice Picker UI
+- Mark Azure HD voices (Ava, Andrew) with "Perfect Lip-Sync" badge
+- Show orange warning banner when ElevenLabs voice is selected
+- Separate Azure voices into "Popular" (Ava, Andrew) and "All Azure Voices" sections
+
+---
+
+## DO NOT CHANGE (Working — leave alone)
+- Avatar bitrate: 4000 kbps (Azure rejects anything higher)
+- Avatar API version: 2024-04-15-preview
+- Chroma key similarity=0.30, blend=0.10 (already tuned)
+- Logger redaction list for API keys
+- Tombstone mechanism for deleted videos
+- ElevenLabs /api/elevenlabs/status and /api/elevenlabs/voices endpoints

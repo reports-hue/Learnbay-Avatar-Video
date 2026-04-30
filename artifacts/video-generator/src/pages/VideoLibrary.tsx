@@ -146,12 +146,20 @@ export function VideoLibrary({ library, addVideo, removeVideo, setPage }: Props)
       )
     : library;
 
-  function handleDelete(id: string) {
+  async function handleDelete(id: string) {
     if (confirmDelete === id) {
       if (playingVideo?.id === id) setPlayingVideo(null);
-      addTombstone(id);
+      addTombstone(id); // belt & braces: keep tombstone even if server delete fails
       removeVideo(id);
       setConfirmDelete(null);
+      // Fire-and-forget actual server-side file deletion. We don't await it
+      // so the UI feels instant; tombstone protects against re-recovery if
+      // this network call fails.
+      try {
+        await fetch(`/api/videos/${encodeURIComponent(id)}`, { method: "DELETE" });
+      } catch {
+        // Non-fatal — tombstone already prevents resurrection
+      }
     } else {
       setConfirmDelete(id);
       setTimeout(() => setConfirmDelete(null), 3000);
