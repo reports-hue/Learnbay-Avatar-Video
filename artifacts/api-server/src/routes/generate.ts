@@ -268,7 +268,19 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
 
     updateJob(jobId, { status: "done", step: "done", percent: 100, message: "Your video is ready!", result });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const e = err as { message?: string; response?: { status?: number; data?: unknown } };
+    const status = e?.response?.status;
+    const data = e?.response?.data;
+    const baseMsg = e?.message ?? String(err);
+    logger.error(
+      { jobId, message: baseMsg, status, responseData: data },
+      "Generation job failed"
+    );
+    let message = baseMsg;
+    if (status && data) {
+      const dataStr = typeof data === "string" ? data : JSON.stringify(data);
+      message = `${baseMsg} (status ${status}): ${dataStr.slice(0, 400)}`;
+    }
     updateJob(jobId, { status: "failed", error: message });
   }
 }
