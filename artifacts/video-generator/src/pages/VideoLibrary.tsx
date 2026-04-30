@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,54 @@ export function VideoLibrary({ library, addVideo, removeVideo, setPage }: Props)
   const [playingVideo, setPlayingVideo] = useState<VideoEntry | null>(null);
   const [recovering, setRecovering] = useState(false);
   const [recoverMsg, setRecoverMsg] = useState<string | null>(null);
+
+  // Keep latest references in refs so the auto-recover effect can run only once
+  // on mount without becoming stale.
+  const libraryRef = useRef(library);
+  const addVideoRef = useRef(addVideo);
+  useEffect(() => { libraryRef.current = library; }, [library]);
+  useEffect(() => { addVideoRef.current = addVideo; }, [addVideo]);
+
+  // Auto-recover any server-side videos that aren't in the local library yet.
+  // This catches the case where the user navigated away from CreateVideo while
+  // a generation was in progress, so the polling never finished writing the
+  // result to localStorage. Runs silently — only surfaces a message if new
+  // videos were actually added.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/videos");
+        if (!res.ok || cancelled) return;
+        const serverVideos = await res.json() as {
+          videoId: string; videoUrl: string;
+          thumbnailUrl: string | null; createdAt: string; sizeBytes: number;
+        }[];
+        if (cancelled) return;
+        const existingIds = new Set(libraryRef.current.map((v) => v.id));
+        const toAdd = serverVideos.filter((v) => !existingIds.has(v.videoId));
+        if (toAdd.length === 0) return;
+        toAdd.forEach((v) => addVideoRef.current({
+          id: v.videoId,
+          topic: "Recovered video",
+          platform: "unknown",
+          scriptStyle: "viral",
+          captionStyle: "animated",
+          voice: "",
+          avatar: "lisa",
+          videoUrl: v.videoUrl,
+          thumbnailUrl: v.thumbnailUrl ?? undefined,
+          script: "",
+          brandTheme: { bgColor1: "#0D1B2A", bgColor2: "#1B2A4A", accentColor: "#7C3AED" },
+          createdAt: v.createdAt,
+        }));
+        setRecoverMsg(`Recovered ${toAdd.length} new video${toAdd.length > 1 ? "s" : ""} from the server.`);
+      } catch {
+        // Silent failure — user can still click the manual Recover button.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   async function recoverVideos() {
     setRecovering(true);
