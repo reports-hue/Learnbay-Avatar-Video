@@ -287,7 +287,30 @@ export async function postProcessAvatarVideo(
   options: PostProcessOptions = {}
 ): Promise<string> {
   const outputPath = path.join(outputsDir, options.outputFilename ?? "final.mp4");
-  const duration = await getDuration(avatarVideoPath);
+  const avatarDuration = await getDuration(avatarVideoPath);
+
+  // If ElevenLabs audio is supplied, retime the avatar video so its overall
+  // duration matches the ElevenLabs audio. This keeps the avatar's mouth
+  // movements roughly aligned with the swapped-in audio (best-effort lip-sync,
+  // since Azure no longer supports lip-sync to external audio).
+  let elDuration = 0;
+  if (options.elAudioPath && existsSync(options.elAudioPath)) {
+    try {
+      elDuration = await getDuration(options.elAudioPath);
+    } catch {
+      elDuration = 0;
+    }
+  }
+  // Clamp the time-stretch ratio to a sensible range so we never produce
+  // grotesquely fast/slow avatar mouth movements if the two TTS engines
+  // diverge wildly. ratio = elDuration / avatarDuration → applied via setpts.
+  const wantsRetime = elDuration > 0 && avatarDuration > 0;
+  const rawRatio = wantsRetime ? elDuration / avatarDuration : 1;
+  const retimeRatio = Math.max(0.7, Math.min(1.4, rawRatio));
+  const useRetime = wantsRetime && Math.abs(retimeRatio - 1) > 0.005;
+  // Effective duration drives output length, fade timings, ken burns pan, etc.
+  const duration = useRetime ? avatarDuration * retimeRatio : avatarDuration;
+
   const isVertical = VERTICAL_PLATFORMS.has(options.platform ?? "");
   const realism = options.realism !== false; // default true
   const useGreenScreen = options.useGreenScreen === true;
@@ -357,7 +380,7 @@ export async function postProcessAvatarVideo(
   const bgImagePath = options.bgImagePath && existsSync(options.bgImagePath) ? options.bgImagePath : null;
   const elAudioPath = options.elAudioPath && existsSync(options.elAudioPath) ? options.elAudioPath : null;
 
-  logger.info({ platform: options.platform, isVertical, outW, outH, useGreenScreen, useGradient, hasBgImage: !!bgImagePath, hasElAudio: !!elAudioPath, realism, captionStyle, duration }, "Post-processing avatar video");
+  logger.info({ platform: options.platform, isVertical, outW, outH, useGreenScreen, useGradient, hasBgImage: !!bgImagePath, hasElAudio: !!elAudioPath, realism, captionStyle, avatarDuration, elDuration, retimeRatio: useRetime ? retimeRatio : 1, duration }, "Post-processing avatar video");
 
   return new Promise((resolve, reject) => {
     let cmd = ffmpeg();
@@ -436,8 +459,18 @@ export async function postProcessAvatarVideo(
     // ── 3. Avatar compositing ──
     let lastV = "av_framed";
 
+    // If we need to retime the avatar to match ElevenLabs audio duration,
+    // apply setpts BEFORE chromakey/scale so all downstream stages see the
+    // retimed video. Otherwise reference the raw avatar input directly.
+    let avSrc = `${avatarIdx}:v`;
+    if (useRetime) {
+      fp.push(`[${avatarIdx}:v]setpts=PTS*${retimeRatio.toFixed(4)}[av_retimed]`);
+      avSrc = "av_retimed";
+      logger.info({ avatarDuration, elDuration, retimeRatio }, "Retiming avatar video to match ElevenLabs audio");
+    }
+
     if (useGreenScreen) {
-      fp.push(`[${avatarIdx}:v]chromakey=color=0x00ff00:similarity=0.30:blend=0.10[ck_pre]`);
+      fp.push(`[${avSrc}]chromakey=color=0x00ff00:similarity=0.30:blend=0.10[ck_pre]`);
       fp.push(`[ck_pre]despill=type=green:mix=0.5:expand=0[ck_out]`);
       if (isVertical) {
         // Portrait output: Azure returns landscape (1920×1080). Scale to full output
@@ -458,11 +491,11 @@ export async function postProcessAvatarVideo(
       // Non-green-screen: scale avatar and overlay on background
       if (isVertical) {
         // Same cover approach: scale to full height, center-crop width
-        fp.push(`[${avatarIdx}:v]scale=-2:${outH}[av_tall]`);
+        fp.push(`[${avSrc}]scale=-2:${outH}[av_tall]`);
         fp.push(`[av_tall]crop=${outW}:${outH}:(iw-${outW})/2:0[av_s]`);
         fp.push(`[bg][av_s]overlay=0:0[av_framed]`);
       } else {
-        fp.push(`[${avatarIdx}:v]scale=${outW}:${outH}:force_original_aspect_ratio=decrease[av_s]`);
+        fp.push(`[${avSrc}]scale=${outW}:${outH}:force_original_aspect_ratio=decrease[av_s]`);
         fp.push(`[bg][av_s]overlay=(W-w)/2:(H-h)/2[av_framed]`);
       }
     }
