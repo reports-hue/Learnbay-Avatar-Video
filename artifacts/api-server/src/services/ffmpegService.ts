@@ -690,19 +690,27 @@ export async function postProcessAvatarVideo(
       // tall on a 1920px frame — invisible. With max-w + max-h +
       // force_original_aspect_ratio=decrease, a 4.98:1 wordmark on vertical
       // becomes 270×54, while a square logo becomes 154×154 — both legible.
-      const maxW = isVertical ? Math.round(outW * 0.25) : Math.round(outW * 0.15);
-      const maxH = isVertical ? Math.round(outH * 0.08) : Math.round(outH * 0.12);
+      const maxW = isVertical ? Math.round(outW * 0.25) : Math.round(outW * 0.16);
+      const maxH = isVertical ? Math.round(outH * 0.08) : Math.round(outH * 0.13);
       const margin = isVertical ? Math.round(outW * 0.025) : Math.round(outW * 0.02);
-      // Scale to fit inside the box, preserve alpha. Padding is proportional
-      // to the *rendered* logo (15% horizontal, 33% vertical each side) so
-      // the pill always feels balanced regardless of source aspect.
-      // Pill opacity bumped from 0xB0 (69%) to 0xCC (80%) for stronger
-      // separation against busy/dark cinematic backgrounds.
+      // Clarity chain for low-res source logos (e.g. 204×41 → 307×62 = 1.5x):
+      //   1. scale with lanczos for the cleanest upscale
+      //   2. unsharp on luma only (chroma=0 prevents color fringing on text)
+      //   3. pill background uses a slightly-lighter dark ("glass") so it
+      //      reads as a defined chip — pure black at 80% blended with the
+      //      cinematic vignette at the top of frame and disappeared.
+      //   4. 2px brand-accent border via drawbox gives the chip a clean
+      //      edge against ANY background (dark bg, blown-out highlight, etc.)
+      const accentSrc = (options.primaryColor ?? "#4A9FFF").replace("#", "").toUpperCase();
+      const accentBorderHex = `0x${accentSrc.padEnd(6, "0").slice(0, 6)}99`; // ~60% alpha
       fp.push(
-        `[${logoIdx}:v]scale=w=${maxW}:h=${maxH}:force_original_aspect_ratio=decrease,format=rgba[logo_raw]`
+        `[${logoIdx}:v]scale=w=${maxW}:h=${maxH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,format=yuva420p,unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.5:chroma_amount=0.0,format=rgba[logo_scaled]`
       );
       fp.push(
-        `[logo_raw]pad=iw*1.30:ih*1.66:iw*0.15:ih*0.33:color=0x000000CC[logo_pill]`
+        `[logo_scaled]pad=iw*1.30:ih*1.66:iw*0.15:ih*0.33:color=0x121A24F0[logo_padded]`
+      );
+      fp.push(
+        `[logo_padded]drawbox=x=0:y=0:w=iw:h=ih:color=${accentBorderHex}:t=2[logo_pill]`
       );
       fp.push(`[${lastV}][logo_pill]overlay=W-w-${margin}:${margin}:format=auto[with_logo]`);
       lastV = "with_logo";
