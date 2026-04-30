@@ -103,6 +103,13 @@ export interface GenerateRequest {
   companyName?: string;
   companyWebsite?: string;
   companyDescription?: string;
+  /**
+   * Optional pre-approved script. When present, runGenerationJob skips the
+   * `generateScript` LLM call and uses this string verbatim. Used by the
+   * "preview & edit script" flow so the user can tweak wording before the
+   * expensive avatar+ffmpeg pipeline runs.
+   */
+  scriptOverride?: string;
 }
 
 // ─── Async generation job ─────────────────────────────────────────
@@ -129,6 +136,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     companyName = "",
     companyWebsite = "",
     companyDescription = "",
+    scriptOverride,
   } = body;
 
   // Whitelist of Azure Avatar characters confirmed to work with this API version
@@ -145,10 +153,20 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
   const videoId = uuidv4().replace(/-/g, "").slice(0, 12);
 
   try {
-    updateJob(jobId, { status: "running", step: "script", percent: 5, message: "Researching your topic & crafting AI script…" });
+    const hasOverride = typeof scriptOverride === "string" && scriptOverride.trim().length > 0;
+    updateJob(jobId, {
+      status: "running",
+      step: "script",
+      percent: 5,
+      message: hasOverride
+        ? "Using your approved script. Preparing brand theme…"
+        : "Researching your topic & crafting AI script…",
+    });
 
-    // Run company research (if brand profile present) and theme generation in parallel
-    const needsResearch = companyName.trim().length > 0;
+    // Run company research (if brand profile present) and theme generation in parallel.
+    // Skip company research when the user pre-approved a script — the research only
+    // exists to feed `generateScript`, so it's pure waste when we have an override.
+    const needsResearch = !hasOverride && companyName.trim().length > 0;
     const needsTheme = autoBackground || !backgroundColor;
     const hasImageDeployment = !!(process.env.AZURE_IMAGE_DEPLOYMENT || process.env.AZURE_OPENAI_ENDPOINT);
     const needsAiBg = autoBackground && hasImageDeployment && !bgImageUrl;
@@ -162,7 +180,9 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
         : Promise.resolve(null),
     ]);
 
-    const script = await generateScript(topic, platform, scriptStyle as ScriptStyle, companyContext || undefined);
+    const script = hasOverride
+      ? scriptOverride.trim()
+      : await generateScript(topic, platform, scriptStyle as ScriptStyle, companyContext || undefined);
 
     let resolvedBgColor1 = (backgroundColor ?? "#000000FF").slice(0, 7);
     let resolvedBgColor2: string | undefined = requestGradientColor2;
@@ -401,6 +421,43 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     updateJob(jobId, { status: "failed", error: message });
   }
 }
+
+// ─── POST /api/script — synchronous script-only generation ───────
+// Returns a draft script for the user to review/edit before kicking off the
+// full (expensive) avatar+ffmpeg pipeline. Synchronous on purpose: scripts
+// take 2-6s to generate and the UX wants the result inline, not via polling.
+router.post("/script", async (req: Request, res: Response) => {
+  const body = req.body as Pick<
+    GenerateRequest,
+    "topic" | "platform" | "scriptStyle" | "companyName" | "companyWebsite" | "companyDescription"
+  >;
+  const topic = (body.topic ?? "").trim();
+  const platform = (body.platform ?? "").trim();
+  if (!topic || !platform) {
+    res.status(400).json({ error: "topic and platform are required" });
+    return;
+  }
+
+  const scriptStyle = (body.scriptStyle ?? "viral") as ScriptStyle;
+  const companyName = (body.companyName ?? "").trim();
+  const companyWebsite = (body.companyWebsite ?? "").trim();
+  const companyDescription = (body.companyDescription ?? "").trim();
+
+  try {
+    const companyContext = companyName.length > 0
+      ? await researchCompanyForScript(companyName, companyWebsite, companyDescription, topic)
+      : "";
+    const script = await generateScript(topic, platform, scriptStyle, companyContext || undefined);
+    res.json({ script });
+  } catch (err) {
+    const e = err as { message?: string; response?: { status?: number; data?: unknown } };
+    req.log.error(
+      { message: e?.message, status: e?.response?.status, responseData: e?.response?.data },
+      "Script-only generation failed"
+    );
+    res.status(500).json({ error: e?.message ?? "Script generation failed" });
+  }
+});
 
 // ─── POST /api/generate — start job, return jobId immediately ─────
 router.post("/generate", async (req: Request, res: Response) => {

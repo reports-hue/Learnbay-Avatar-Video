@@ -7,6 +7,7 @@ import {
   Library, RotateCcw, Building2, AlertCircle,
   Volume2, VolumeX, Play, Loader2, Zap, Gauge,
   Search, X, Upload, Camera, Globe, Mic2,
+  FileText, RefreshCw, Edit3,
 } from "lucide-react";
 import type { BrandProfile, VideoEntry, Page } from "@/lib/types";
 import { PLATFORMS, SCRIPT_STYLES, AVATARS, QUICK_VOICES, VOICE_STYLES, CAPTION_STYLES, SCENE_PRESETS } from "@/lib/config";
@@ -439,6 +440,13 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   const [resumedJob, setResumedJob] = useState(false);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Script preview/edit state — when set, the user has generated a draft
+  // script and is reviewing/editing it before approving the full pipeline.
+  const [draftScript, setDraftScript] = useState<string | null>(null);
+  const [editedScript, setEditedScript] = useState("");
+  const [loadingScript, setLoadingScript] = useState(false);
+  const [scriptError, setScriptError] = useState<string | null>(null);
+
   const voiceStyleOptions = VOICE_STYLES[voice] ?? [];
 
   function handleAvatarChange(char: string) {
@@ -722,15 +730,56 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
     };
   }
 
+  /**
+   * Generate the draft script only (no avatar/ffmpeg pipeline). Result lands
+   * in `draftScript` + `editedScript` so the user can review and tweak the
+   * wording before committing to the expensive full render.
+   */
+  async function generateDraftScript() {
+    setLoadingScript(true);
+    setScriptError(null);
+    setDraftScript(null);
+    setEditedScript("");
+    try {
+      const payload = {
+        topic: topic.trim(),
+        platform,
+        scriptStyle,
+        companyName: brandMode === "saved" ? brand.companyName : undefined,
+        companyWebsite: brandMode === "saved" ? brand.websiteUrl : undefined,
+        companyDescription: brandMode === "saved" ? brand.description : undefined,
+      };
+      const clean = Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined && v !== ""));
+      const resp = await fetch("/api/script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(clean),
+      });
+      const data = await resp.json() as { script?: string; error?: string };
+      if (!resp.ok || !data.script) throw new Error(data.error ?? `HTTP ${resp.status}`);
+      setDraftScript(data.script);
+      setEditedScript(data.script);
+    } catch (err) {
+      setScriptError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingScript(false);
+    }
+  }
+
   async function generate() {
     setIsGenerating(true);
     setGenError(null);
     setResult(null);
-    setLiveScript(null);
+    setLiveScript(editedScript || null);
     setResumedJob(false);
     setProgress({ step: "start", percent: 0, message: "Starting…" });
 
     const payload = buildPayload();
+    // If the user reviewed/edited a draft script, send it as an override so
+    // the server skips the LLM script step and uses the approved version.
+    if (editedScript.trim().length > 0) {
+      (payload as Record<string, unknown>).scriptOverride = editedScript.trim();
+    }
     const cleanPayload = Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined));
 
     try {
@@ -766,6 +815,10 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
     setGenError(null);
     setIsGenerating(false);
     setResumedJob(false);
+    setDraftScript(null);
+    setEditedScript("");
+    setScriptError(null);
+    setLoadingScript(false);
     stopPreview();
   }
 
@@ -1316,11 +1369,104 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             </div>
           )}
 
+          {/* ── Script preview / edit gate ── */}
           {!result && !isGenerating && (
-            <Button size="lg" className="w-full text-base h-12 shadow-sm" onClick={generate} disabled={!topic.trim()}>
-              <Sparkles className="w-5 h-5" />
-              Generate Avatar Video
-            </Button>
+            <div className="bg-white border border-border rounded-xl p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-primary" />
+                <h3 className="text-sm font-semibold text-foreground">Script</h3>
+                {draftScript && (
+                  <Badge variant="secondary" className="text-[10px] bg-violet-100 text-violet-700 border-0 ml-auto">
+                    {editedScript.trim().length === draftScript.trim().length
+                      ? "Draft ready"
+                      : "Edited"}
+                  </Badge>
+                )}
+              </div>
+
+              {!draftScript && !loadingScript && !scriptError && (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Generate a draft script first so you can review and edit the wording before
+                    we render the avatar video. The full render takes a few minutes — better to
+                    catch tweaks here.
+                  </p>
+                  <Button
+                    size="lg"
+                    className="w-full text-base h-12 shadow-sm"
+                    onClick={generateDraftScript}
+                    disabled={!topic.trim()}
+                  >
+                    <Sparkles className="w-5 h-5" />
+                    Generate Script
+                  </Button>
+                </>
+              )}
+
+              {loadingScript && (
+                <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                  Writing your script…
+                </div>
+              )}
+
+              {scriptError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 space-y-2">
+                  <p className="flex items-center gap-1.5 font-semibold">
+                    <AlertCircle className="w-3.5 h-3.5" /> Couldn't generate script
+                  </p>
+                  <p className="text-red-600">{scriptError}</p>
+                  <Button size="sm" variant="outline" className="border-red-200 text-red-600 hover:bg-red-50" onClick={generateDraftScript}>
+                    <RefreshCw className="w-3.5 h-3.5" /> Try again
+                  </Button>
+                </div>
+              )}
+
+              {draftScript && (
+                <>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium flex items-center gap-1.5">
+                        <Edit3 className="w-3 h-3" /> Edit your script
+                      </p>
+                      <span className="text-[10px] text-muted-foreground tabular-nums">
+                        {editedScript.trim().split(/\s+/).filter(Boolean).length} words
+                      </span>
+                    </div>
+                    <textarea
+                      value={editedScript}
+                      onChange={(e) => setEditedScript(e.target.value)}
+                      rows={10}
+                      className="w-full px-3 py-2.5 text-sm leading-relaxed border border-border rounded-lg bg-gray-50 focus:outline-none focus:border-primary focus:bg-white font-mono resize-y min-h-[180px]"
+                      placeholder="Your script will appear here…"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Tweak the wording, fix names, adjust the hook — the avatar will read this exact text.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Button
+                      variant="outline"
+                      className="gap-1.5 sm:flex-shrink-0"
+                      onClick={generateDraftScript}
+                      disabled={loadingScript}
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" /> Regenerate
+                    </Button>
+                    <Button
+                      size="lg"
+                      className="flex-1 text-base h-12 shadow-sm bg-emerald-600 hover:bg-emerald-700 text-white"
+                      onClick={generate}
+                      disabled={!editedScript.trim()}
+                    >
+                      <Check className="w-5 h-5" />
+                      Approve & Create Video
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {/* Progress */}
