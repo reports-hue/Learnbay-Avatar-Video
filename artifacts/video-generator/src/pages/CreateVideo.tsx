@@ -1102,9 +1102,24 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
               );
             })()}
 
+            {/* Lip-sync trade-off explainer (shown only for ElevenLabs voices) */}
+            {voice.startsWith("el:") && (
+              <div className="flex gap-2 p-3 rounded-lg border border-orange-200 bg-orange-50/60 text-[11px] leading-relaxed">
+                <span className="text-orange-500 flex-shrink-0">⚠</span>
+                <div className="text-orange-900">
+                  <strong>Heads up — slight lip-sync drift.</strong>{" "}
+                  ElevenLabs gives you the best voice quality, but the avatar's mouth is animated from a different engine, so words can drift ~50–150ms out of sync.
+                  {" "}For <strong>perfect lip-sync</strong>, switch to an Azure HD voice (Ava or Andrew) below — they sound nearly as natural.
+                </div>
+              </div>
+            )}
+
             {/* Quick-select popular voices */}
             <div>
-              <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Popular voices</p>
+              <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wide font-medium flex items-center gap-2">
+                Popular voices
+                <span className="text-[9px] normal-case bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded font-semibold">HD = perfect lip-sync</span>
+              </p>
               <div className="flex flex-wrap gap-1.5">
                 {QUICK_VOICES.slice(0, 10).map((v) => (
                   <button key={v.value} onClick={() => handleVoiceChange(v.value)}

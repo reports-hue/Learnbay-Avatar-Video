@@ -318,7 +318,6 @@ export async function postProcessAvatarVideo(
   const outW = isVertical ? 1080 : 1920;
   const outH = isVertical ? 1920 : 1080;
   const lowerH = Math.round(outH * 0.22);
-  const barH = isVertical ? 5 : 4;
 
   // Oversized dimensions for Ken Burns (3% larger)
   const outW103 = Math.round(outW * 1.03);
@@ -512,16 +511,14 @@ export async function postProcessAvatarVideo(
       lastV = "vignetted";
     }
 
-    // ── 5. Professional lower-third (two-layer dark overlay) ──
+    // ── 5. Subtle lower-third gradient (single very-soft layer) ──
+    // Removed the second darker layer + the brand accent bar — both showed
+    // as visible horizontal seams in the frame. The captions sit on their
+    // own pill background (BorderStyle=3) so they don't need a heavy
+    // backing strip beneath them.
     const lt = lowerH;
-    const lt2 = Math.round(lt * 0.55);
-    fp.push(`[${lastV}]drawbox=x=0:y=ih-${lt}:w=iw:h=${lt}:c=black@0.52:t=fill[with_lt1]`);
-    fp.push(`[with_lt1]drawbox=x=0:y=ih-${lt2}:w=iw:h=${lt2}:c=black@0.22:t=fill[with_lt]`);
+    fp.push(`[${lastV}]drawbox=x=0:y=ih-${lt}:w=iw:h=${lt}:c=black@0.28:t=fill[with_lt]`);
     lastV = "with_lt";
-
-    // ── 6. Brand accent line above lower-third ──
-    fp.push(`[${lastV}]drawbox=x=0:y=ih-${lt + barH}:w=iw:h=${barH}:c=${accentHex}:t=fill[with_bar]`);
-    lastV = "with_bar";
 
     // ── 7. Logo — top-right with dark glass pill background ──
     if (logoIdx >= 0) {
