@@ -84,7 +84,7 @@ artifacts/
 
 1. Background source, oversized 3% (`gradients` or `color`)
 2. Ken Burns crop pan on background
-3. Avatar compositing — **active path**: `chromakey=0x00ff00:similarity=0.30:blend=0.10` → `despill=type=green:mix=0.5` → `scale` → `overlay`. Transparent-WebM branch (`format=yuva420p` → `scale` → `overlay …:format=auto`) exists in code for future Azure API versions but is currently disabled — see Known Azure Limitations.
+3. Avatar compositing — **active path** (tuned Apr 30 2026 for JPEG-compressed Azure source): `format=yuva420p,chromakey=0x00ff00:similarity=0.20:blend=0.12` → `despill=type=green:mix=0.4` → `gblur=sigma=1.5:steps=1:planes=8` (alpha-only blur) → `scale` → `overlay :format=auto`. Tighter similarity prevents holes in light fabric; alpha-plane blur smooths blocky stair-stepping at silhouette edges. Transparent-WebM branch (`format=yuva420p` → `scale` → `overlay …:format=auto`) exists in code for future Azure API versions but is currently disabled — see Known Azure Limitations.
 4. Color grade (`eq`) + sharpen (`unsharp`) + vignette
 5. Lower-third dark overlay (2-layer `drawbox`)
 6. Brand accent line (`drawbox`)

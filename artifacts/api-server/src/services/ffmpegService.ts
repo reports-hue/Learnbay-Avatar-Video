@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { existsSync } from "fs";
 import { createWriteStream } from "fs";
 import fs from "fs/promises";
+import { spawn } from "child_process";
 import { logger } from "../lib/logger.js";
 import type { WordTiming } from "./speech.js";
 
@@ -28,6 +29,82 @@ async function getDuration(filePath: string): Promise<number> {
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err) return reject(err);
       resolve(metadata.format.duration ?? 0);
+    });
+  });
+}
+
+interface LoudnessTarget {
+  I: number;   // integrated loudness (LUFS)
+  TP: number;  // true peak (dBTP)
+  LRA: number; // loudness range (LU)
+}
+
+interface LoudnessMeasurement {
+  measured_I: string;
+  measured_TP: string;
+  measured_LRA: string;
+  measured_thresh: string;
+  offset: string;
+}
+
+/**
+ * Two-pass loudnorm measurement. Runs ffmpeg with print_format=json against
+ * the audio of `audioPath` (video container or bare audio file), parses the
+ * trailing JSON block from stderr, and returns measured params suitable for
+ * feeding into a second loudnorm pass with `linear=true`.
+ *
+ * Returns null on any failure — caller should fall back to single-pass.
+ *
+ * Why two-pass: single-pass loudnorm uses a dynamic algorithm that lands
+ * approximately ±2 LU off target on short content. Two-pass uses linear
+ * gain based on the measured integrated loudness and lands within ±0.5 LU,
+ * which matters for matching broadcast spec (Azure-TTS: −16 LUFS / −1.5 dBTP,
+ * ElevenLabs: −14 LUFS / −1.0 dBTP).
+ */
+async function measureLoudness(
+  audioPath: string,
+  target: LoudnessTarget
+): Promise<LoudnessMeasurement | null> {
+  return new Promise((resolve) => {
+    const bin = ffmpegPath || "ffmpeg";
+    const args = [
+      "-hide_banner",
+      "-nostats",
+      "-i", audioPath,
+      "-vn",
+      "-af", `loudnorm=I=${target.I}:TP=${target.TP}:LRA=${target.LRA}:print_format=json`,
+      "-f", "null",
+      "-",
+    ];
+    const proc = spawn(bin, args);
+    let stderr = "";
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.on("error", () => resolve(null));
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        logger.warn({ code, audioPath }, "loudnorm pass-1 measurement failed");
+        return resolve(null);
+      }
+      // ffmpeg prints the JSON block at the end of stderr — find the last
+      // brace block that contains "input_i".
+      const matches = stderr.match(/\{[\s\S]*?"input_i"[\s\S]*?\}/g);
+      if (!matches || matches.length === 0) {
+        logger.warn({ audioPath }, "loudnorm pass-1: no JSON block in stderr");
+        return resolve(null);
+      }
+      try {
+        const j = JSON.parse(matches[matches.length - 1]);
+        resolve({
+          measured_I: String(j.input_i),
+          measured_TP: String(j.input_tp),
+          measured_LRA: String(j.input_lra),
+          measured_thresh: String(j.input_thresh),
+          offset: String(j.target_offset),
+        });
+      } catch (err) {
+        logger.warn({ err, audioPath }, "loudnorm pass-1 JSON parse failed");
+        resolve(null);
+      }
     });
   });
 }
@@ -417,6 +494,30 @@ export async function postProcessAvatarVideo(
     "Post-processing avatar video"
   );
 
+  // ── Two-pass loudnorm: pass-1 measurement (BEFORE building filter graph) ──
+  // Run loudness analysis on the speech-only source. We pick the source the
+  // listener will actually hear: ElevenLabs mp3 if supplied, else the avatar
+  // mp4 (which carries the Azure TTS track). Music is mixed in later at very
+  // low level (≤ 0.07) and sits below the −30 LUFS gate, so its contribution
+  // to integrated loudness is negligible — measuring speech-only is correct.
+  const isElSpeechAudio = !!elAudioPath;
+  const _loudnessTarget: LoudnessTarget = isElSpeechAudio
+    ? { I: -14, TP: -1.0, LRA: 9 }
+    : { I: -16, TP: -1.5, LRA: 11 };
+  const _speechAudioPath = isElSpeechAudio ? elAudioPath! : avatarVideoPath;
+  const measuredLoudness = await measureLoudness(_speechAudioPath, _loudnessTarget);
+  if (measuredLoudness) {
+    logger.info(
+      { target: _loudnessTarget, measured: measuredLoudness, isElSpeechAudio },
+      "Loudnorm pass-1 complete (two-pass enabled)"
+    );
+  } else {
+    logger.warn(
+      { isElSpeechAudio },
+      "Loudnorm pass-1 unavailable — falling back to single-pass"
+    );
+  }
+
   return new Promise((resolve, reject) => {
     let cmd = ffmpeg();
     let inputIndex = 0;
@@ -520,11 +621,17 @@ export async function postProcessAvatarVideo(
         fp.push(`[bg][av_s]overlay=(W-w)/2:${avatarY}:format=auto[av_framed]`);
       }
     } else if (useGreenScreen) {
-      // Legacy chroma key path — kept as a documented fallback while the
-      // transparent WebM path is being validated end-to-end. Once confirmed
-      // working in production this branch can be removed.
-      fp.push(`[${avSrc}]chromakey=color=0x00ff00:similarity=0.30:blend=0.10[ck_pre]`);
-      fp.push(`[ck_pre]despill=type=green:mix=0.5:expand=0[ck_out]`);
+      // Green-screen + chroma key path (active in production).
+      // Tuned for Azure's JPEG-compressed yuvj420p output: chroma subsampling
+      // creates "almost green" pixels inside light clothing/fabric. We keep
+      // similarity tight (0.20) to avoid punching holes, widen blend (0.12)
+      // for softer silhouette edges, then blur ONLY the alpha plane
+      // (planes=8 in yuva420p) so any remaining stair-stepping is smoothed
+      // without softening the avatar's actual pixels. Lower despill mix
+      // (0.4) preserves more natural skin/hair tone near the silhouette.
+      fp.push(`[${avSrc}]format=yuva420p,chromakey=color=0x00ff00:similarity=0.20:blend=0.12[ck_pre]`);
+      fp.push(`[ck_pre]despill=type=green:mix=0.4:expand=0[ck_dsp]`);
+      fp.push(`[ck_dsp]gblur=sigma=1.5:steps=1:planes=8[ck_out]`);
       if (isVertical) {
         // Portrait output: Azure returns landscape (1920×1080). Scale to full output
         // height so the avatar fills the frame top-to-bottom, then center-crop to
@@ -532,13 +639,14 @@ export async function postProcessAvatarVideo(
         // only occupied the bottom 30% of the portrait frame.
         fp.push(`[ck_out]scale=-2:${outH}[av_tall]`);
         fp.push(`[av_tall]crop=${outW}:${outH}:(iw-${outW})/2:0[av_s]`);
-        fp.push(`[bg][av_s]overlay=0:0[av_framed]`);
+        // format=auto so overlay honors the alpha channel produced by chromakey
+        fp.push(`[bg][av_s]overlay=0:0:format=auto[av_framed]`);
       } else {
         // Landscape output: scale avatar to 88% of output height and anchor to bottom
         const avatarH = Math.round(outH * 0.88);
         const avatarY = outH - avatarH - 30;
         fp.push(`[ck_out]scale=-2:${avatarH}[av_s]`);
-        fp.push(`[bg][av_s]overlay=(W-w)/2:${avatarY}[av_framed]`);
+        fp.push(`[bg][av_s]overlay=(W-w)/2:${avatarY}:format=auto[av_framed]`);
       }
     } else {
       // Non-green-screen: scale avatar and overlay on background
@@ -576,13 +684,26 @@ export async function postProcessAvatarVideo(
 
     // ── 7. Logo — top-right with dark glass pill background ──
     if (logoIdx >= 0) {
-      const logoW = isVertical ? Math.round(outW * 0.15) : Math.round(outW * 0.09);
-      const margin = isVertical ? 24 : 18;
-      const hPad = 18; // horizontal padding inside pill
-      const vPad = 12; // vertical padding inside pill
-      // Scale logo, preserve alpha, add semi-transparent dark padding (pill background)
-      fp.push(`[${logoIdx}:v]scale=${logoW}:-1,format=rgba[logo_raw]`);
-      fp.push(`[logo_raw]pad=iw+${hPad * 2}:ih+${vPad * 2}:${hPad}:${vPad}:color=0x000000B0[logo_pill]`);
+      // Constrain by BOTH width and height with aspect preservation. Brand
+      // wordmarks are often very wide low-res strips (e.g. 204×41); the
+      // previous "scale to 15% of width" rule made them render at ~33px
+      // tall on a 1920px frame — invisible. With max-w + max-h +
+      // force_original_aspect_ratio=decrease, a 4.98:1 wordmark on vertical
+      // becomes 270×54, while a square logo becomes 154×154 — both legible.
+      const maxW = isVertical ? Math.round(outW * 0.25) : Math.round(outW * 0.15);
+      const maxH = isVertical ? Math.round(outH * 0.08) : Math.round(outH * 0.12);
+      const margin = isVertical ? Math.round(outW * 0.025) : Math.round(outW * 0.02);
+      // Scale to fit inside the box, preserve alpha. Padding is proportional
+      // to the *rendered* logo (15% horizontal, 33% vertical each side) so
+      // the pill always feels balanced regardless of source aspect.
+      // Pill opacity bumped from 0xB0 (69%) to 0xCC (80%) for stronger
+      // separation against busy/dark cinematic backgrounds.
+      fp.push(
+        `[${logoIdx}:v]scale=w=${maxW}:h=${maxH}:force_original_aspect_ratio=decrease,format=rgba[logo_raw]`
+      );
+      fp.push(
+        `[logo_raw]pad=iw*1.30:ih*1.66:iw*0.15:ih*0.33:color=0x000000CC[logo_pill]`
+      );
       fp.push(`[${lastV}][logo_pill]overlay=W-w-${margin}:${margin}:format=auto[with_logo]`);
       lastV = "with_logo";
     }
@@ -630,14 +751,41 @@ export async function postProcessAvatarVideo(
     const af: string[] = [];
     const musicFadeOut = Math.max(0, duration - 1.5);
 
-    // Speech processing chain.
+    // Speech processing chain — TWO-PASS LOUDNORM.
     // ElevenLabs is studio-mastered audio: skip the artificial room "aecho"
     // (it was only there to humanise dry Azure TTS) and use a lighter
     // loudnorm pass so we don't squash the existing dynamics.
+    //
+    // Two-pass loudnorm:
+    //   Pass 1 (already done above for measurement): print_format=json on
+    //   the speech-only source to get accurate input_i/tp/lra/thresh/offset.
+    //   Pass 2 (this filter chain): apply loudnorm with measured_* params
+    //   and linear=true → lands within ±0.5 LU of target instead of ±2 LU.
+    // If pass 1 failed for any reason (logged inside measureLoudness),
+    // fall back to single-pass which still works, just less precisely.
     const isElSpeech = elAudioIdx >= 0;
+    // Use the pre-measured loudness from above. If measurement succeeded,
+    // emit a full two-pass loudnorm with measured_* params + linear=true;
+    // otherwise emit single-pass (still works, just less precisely).
+    const _t = _loudnessTarget;
+    const loudnormFilter = measuredLoudness
+      ? [
+          `loudnorm=I=${_t.I}`,
+          `TP=${_t.TP}`,
+          `LRA=${_t.LRA}`,
+          `measured_I=${measuredLoudness.measured_I}`,
+          `measured_TP=${measuredLoudness.measured_TP}`,
+          `measured_LRA=${measuredLoudness.measured_LRA}`,
+          `measured_thresh=${measuredLoudness.measured_thresh}`,
+          `offset=${measuredLoudness.offset}`,
+          `linear=true`,
+          `print_format=summary`,
+        ].join(":")
+      : `loudnorm=I=${_t.I}:TP=${_t.TP}:LRA=${_t.LRA}`;
+
     const speechChain = isElSpeech
-      ? `aformat=fltp:48000:stereo,loudnorm=I=-14:TP=-1.0:LRA=9`
-      : `aformat=fltp:44100:stereo,loudnorm=I=-16:TP=-1.5:LRA=11,aecho=0.8:0.9:40:0.3`;
+      ? `aformat=fltp:48000:stereo,${loudnormFilter}`
+      : `aformat=fltp:44100:stereo,${loudnormFilter},aecho=0.8:0.9:40:0.3`;
 
     if (musicIdx >= 0) {
       if (realism) {
