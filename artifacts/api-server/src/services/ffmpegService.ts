@@ -579,25 +579,34 @@ export async function postProcessAvatarVideo(
     const af: string[] = [];
     const musicFadeOut = Math.max(0, duration - 1.5);
 
+    // Speech processing chain.
+    // ElevenLabs is studio-mastered audio: skip the artificial room "aecho"
+    // (it was only there to humanise dry Azure TTS) and use a lighter
+    // loudnorm pass so we don't squash the existing dynamics.
+    const isElSpeech = elAudioIdx >= 0;
+    const speechChain = isElSpeech
+      ? `aformat=fltp:48000:stereo,loudnorm=I=-14:TP=-1.0:LRA=9`
+      : `aformat=fltp:44100:stereo,loudnorm=I=-16:TP=-1.5:LRA=11,aecho=0.8:0.9:40:0.3`;
+
     if (musicIdx >= 0) {
       if (realism) {
         af.push(
-          `[${speechSrcIdx}:a]aformat=fltp:44100:stereo,loudnorm=I=-16:TP=-1.5:LRA=11,aecho=0.8:0.9:40:0.3[speech_e]`,
-          `[${musicIdx}:a]aformat=fltp:44100:stereo,volume=0.06,afade=t=in:st=0:d=1:curve=qua,afade=t=out:st=${musicFadeOut}:d=1.5:curve=qua[bg_music]`,
-          `[speech_e][bg_music]amix=inputs=2:duration=first[aout]`
+          `[${speechSrcIdx}:a]${speechChain}[speech_e]`,
+          `[${musicIdx}:a]aformat=fltp:48000:stereo,volume=0.06,afade=t=in:st=0:d=1:curve=qua,afade=t=out:st=${musicFadeOut}:d=1.5:curve=qua[bg_music]`,
+          `[speech_e][bg_music]amix=inputs=2:duration=first:normalize=0[aout]`
         );
       } else {
         af.push(
-          `[${speechSrcIdx}:a]aformat=fltp:44100:stereo,volume=1.0[speech]`,
-          `[${musicIdx}:a]aformat=fltp:44100:stereo,volume=0.07[bg_music]`,
-          `[speech][bg_music]amix=inputs=2:duration=first[aout]`
+          `[${speechSrcIdx}:a]aformat=fltp:48000:stereo,volume=1.0[speech]`,
+          `[${musicIdx}:a]aformat=fltp:48000:stereo,volume=0.07[bg_music]`,
+          `[speech][bg_music]amix=inputs=2:duration=first:normalize=0[aout]`
         );
       }
     } else {
       if (realism) {
-        af.push(`[${speechSrcIdx}:a]aformat=fltp:44100:stereo,loudnorm=I=-16:TP=-1.5:LRA=11,aecho=0.8:0.9:40:0.3[aout]`);
+        af.push(`[${speechSrcIdx}:a]${speechChain}[aout]`);
       } else {
-        af.push(`[${speechSrcIdx}:a]aformat=fltp:44100:stereo[aout]`);
+        af.push(`[${speechSrcIdx}:a]aformat=fltp:48000:stereo[aout]`);
       }
     }
 
@@ -609,10 +618,16 @@ export async function postProcessAvatarVideo(
       "-map [aout]",
       `-t ${duration}`,
       "-c:v libx264",
-      "-preset fast",
-      "-crf 20",
+      "-preset medium",
+      "-crf 18",
+      "-profile:v high",
+      "-level 4.1",
+      "-g 60",
+      "-keyint_min 60",
+      "-sc_threshold 0",
       "-c:a aac",
-      "-b:a 128k",
+      "-b:a 192k",
+      "-ar 48000",
       "-movflags +faststart",
       "-pix_fmt yuv420p",
     ];

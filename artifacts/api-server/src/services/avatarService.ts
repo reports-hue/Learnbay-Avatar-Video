@@ -132,7 +132,7 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
     videoFormat: "mp4",
     videoCodec: "h264",
     backgroundColor: config.bgImageUrl ? "#000000FF" : effectiveBgColor,
-    bitrateKbps: 4000,
+    bitrateKbps: 8000,
     subtitleType: "none",
   };
 
