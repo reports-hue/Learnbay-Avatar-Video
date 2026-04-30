@@ -69,7 +69,6 @@ export async function generateBackgroundImage(
       size,
       quality: "medium",
       output_format: "png",
-      output_compression: 90,
     },
     {
       headers: {

@@ -167,7 +167,15 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
         );
         logger.info({ aiBgImagePath }, "AI background image ready");
       } catch (err) {
-        logger.warn({ err }, "AI background generation failed — falling back to gradient");
+        const e = err as { message?: string; response?: { status?: number; data?: unknown } };
+        logger.warn(
+          {
+            message: e?.message,
+            status: e?.response?.status,
+            responseData: e?.response?.data,
+          },
+          "AI background generation failed — falling back to gradient"
+        );
       }
     }
 
