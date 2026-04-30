@@ -15,6 +15,7 @@ import {
   buildLightLeakFilters,
 } from "./leakService.js";
 import { computeOutroState, generateOutroCardAss } from "./outroCardService.js";
+import { detectBeats, buildBeatPulseFilter } from "./beatDetect.js";
 import {
   computeIntroState,
   buildLargeLogoFilters,
@@ -806,6 +807,44 @@ export async function postProcessAvatarVideo(
     }
   }
 
+  // ── Beat detection (T106) ──
+  // When a music track is present, detect rhythmic accents in it so the
+  // background can pulse subtly in sync with the beat. Detection runs the
+  // music through a one-pass FFmpeg `astats` analysis; the result is a list
+  // of timestamps (already tiled across `duration` to handle music looping).
+  // On any failure (missing file, decode error, no clear beats), `beats` is
+  // empty and the downstream filter becomes a null pass-through — so this
+  // never breaks rendering.
+  let beatPulseTimestamps: number[] = [];
+  if (musicPath) {
+    try {
+      const beatResult = await detectBeats(musicPath, {
+        videoDurationSec: duration,
+        tileToVideoDuration: true,
+        maxBeats: 64,
+      });
+      // Filter beats out of the T104 intro sting window (0 - 1.6s) where the
+      // blackout would mask any pulse anyway, and out of the T105 outro card
+      // window (last 2.5s when active) where the bg is dimmed under the card.
+      const introEnd = introState.active ? 1.6 : 0;
+      const outroStart = outroState.active ? outroState.startSec : duration;
+      beatPulseTimestamps = beatResult.beats.filter((t) => t >= introEnd && t < outroStart);
+      logger.info(
+        {
+          beatCount: beatPulseTimestamps.length,
+          rawBeatCount: beatResult.beats.length,
+          approxBpm: beatResult.approxBpm,
+          medianRmsDb: beatResult.medianRmsDb.toFixed(1),
+          sample: beatPulseTimestamps.slice(0, 5).map((t) => t.toFixed(2)),
+        },
+        "Beat-sync pulses scheduled"
+      );
+    } catch (err) {
+      logger.warn({ err: (err as Error).message }, "Beat detection failed; skipping pulses");
+      beatPulseTimestamps = [];
+    }
+  }
+
   const bgImagePath = options.bgImagePath && existsSync(options.bgImagePath) ? options.bgImagePath : null;
   const elAudioPath = options.elAudioPath && existsSync(options.elAudioPath) ? options.elAudioPath : null;
 
@@ -969,6 +1008,7 @@ export async function postProcessAvatarVideo(
     // Soft warm radial bloom flashes at sentence ends. Blended via screen on
     // the BACKGROUND ONLY (before avatar overlay) so the avatar face is never
     // washed out. When no events, this is a single null-filter pass-through.
+    const bgAfterLeaksLabel = beatPulseTimestamps.length > 0 ? "bg_leaked" : "bg";
     fp.push(...buildLightLeakFilters({
       events: leakEvents,
       leakInputIndices,
@@ -976,11 +1016,25 @@ export async function postProcessAvatarVideo(
       outW,
       outH,
       inputLabel: "bg_par",
-      outputLabel: "bg",
+      outputLabel: bgAfterLeaksLabel,
       opacity: 0.30,
       preWindowSec: 0.05,
       postWindowSec: 0.40,
     }));
+
+    // ── 3d. Beat-synced background brightness pulses (T106) ──
+    // Subtle +5% brightness flashes on detected music beats — applied to the
+    // BACKGROUND LAYER ONLY (before avatar overlay) so the avatar face never
+    // pulses. Skipped entirely when there are no beats (no music, detection
+    // failed, or all beats fell inside intro/outro windows): in that case
+    // step 3c already emits `[bg]` directly and we don't push another filter.
+    if (beatPulseTimestamps.length > 0) {
+      fp.push(...buildBeatPulseFilter(beatPulseTimestamps, "bg_leaked", "bg", {
+        brightnessDelta: 0.05,
+        preWindowSec: 0.02,
+        postWindowSec: 0.10,
+      }));
+    }
 
     // ── 4. Avatar compositing ──
     let lastV = "av_framed";
