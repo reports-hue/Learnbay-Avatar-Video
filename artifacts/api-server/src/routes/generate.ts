@@ -213,10 +213,14 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     // Transparent WebM path replaces the legacy green-screen + chroma key flow.
     // It only kicks in when we'd otherwise be doing chroma keying (realism on,
     // no Azure-side bg image). The legacy chroma path stays wired in case Azure
-    // ever rejects the transparent request — flip useTransparent to false to
-    // fall back. See ffmpegService.ts useGreenScreen branch.
-    const useTransparent = realism && !bgImageUrl;
-    const useGreenScreen = false; // disabled in favour of transparent WebM
+    // ever rejects the transparent request — to fall back, set the constant
+    // PREFER_TRANSPARENT_WEBM below to false. That single switch flips both the
+    // Azure request body (avatarService.ts) and the FFmpeg overlay strategy
+    // (ffmpegService.ts useGreenScreen branch).
+    const PREFER_TRANSPARENT_WEBM = true;
+    const wantsAlphaCompositing = realism && !bgImageUrl;
+    const useTransparent = PREFER_TRANSPARENT_WEBM && wantsAlphaCompositing;
+    const useGreenScreen = !PREFER_TRANSPARENT_WEBM && wantsAlphaCompositing;
     const azureBgColor = resolvedBgColor1 + "FF";
 
     const avatarConfig: AvatarJobConfig = {

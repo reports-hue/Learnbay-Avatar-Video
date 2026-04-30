@@ -1,0 +1,74 @@
+## Task: Verify Transparent WebM Avatar Pipeline End-to-End
+
+### Context
+The Azure Avatar API was just switched from green-screen MP4 to transparent WebM (videoFormat webm, videoCodec vp9, backgroundColor transparent). FFmpeg now overlays the WebM alpha channel directly. The green-screen chroma path is kept as a fallback. This has NOT been tested yet — verify it works or fall back cleanly.
+
+---
+
+## STEP 1 — Verify the WebM has a real alpha channel
+
+After a test generation completes, run:
+ffprobe -v error -show_streams outputs/avatar_raw.webm
+
+Look for pix_fmt=yuva420p — the "a" means alpha channel is present.
+Also confirm codec_name=vp9 in the video stream.
+
+If pix_fmt is NOT yuva420p: Azure ignored the transparent request. Do NOT try to force it. Fall back to green-screen chroma path by setting useTransparent = false in generate.ts and document the failure in replit.md.
+
+---
+
+## STEP 2 — Verify FFmpeg overlay filter is correct
+
+Check the FFmpeg filter graph in ffmpegService.ts for the transparent path.
+It must include format=yuva420p before the overlay to preserve alpha.
+Correct filter chain: [avatar]format=yuva420p,scale=W:H[av];[bg][av]overlay=x:y:format=auto[out]
+
+If the overlay drops the alpha (avatar appears on solid black/white background instead of transparent), add -vf "format=yuva420p" before the overlay step.
+
+The final output video must still be MP4 H.264. Only the intermediate avatar file is WebM.
+Output encoding flags must not change: -preset fast -crf 18 -profile:v high -level 4.1
+
+---
+
+## STEP 3 — Visual quality check
+
+Watch the generated video. Avatar edges (hair, shoulders, face outline) must be:
+- Clean with zero green tint
+- Zero halo or fringe
+- Natural blend into background with no hard cutout edge
+
+If edges look correct: update replit.md to mark transparent WebM as confirmed working.
+If edges look worse than green-screen: revert to chroma path, document the failure reason in replit.md.
+
+---
+
+## IF BROKEN — Fallback procedure
+
+1. In generate.ts: set useTransparent = false and useGreenScreen = true
+2. In avatarService.ts: revert to videoFormat mp4, remove backgroundColor transparent and videoCodec vp9
+3. Restore avatar file download to save as .mp4
+4. Confirm chroma path in ffmpegService.ts still has: similarity=0.30, blend=0.10, despill filter
+5. Run pnpm tsc --noEmit in both packages — zero errors
+6. Restart API server and confirm clean boot
+7. Document failure reason in replit.md under Known Azure Limitations
+
+---
+
+## HARD RULES — Do not violate during this session
+
+- NEVER change avatar API version from 2024-04-15-preview
+- NEVER set avatar bitrateKbps above 4000
+- NEVER change FFmpeg output flags: -preset fast -crf 18 -profile:v high -level 4.1 -g 60 -keyint_min 60
+- NEVER change audio flags: -c:a aac -b:a 192k -ar 48000
+- NEVER delete the green-screen chroma path from ffmpegService.ts — it must remain as a working fallback
+- NEVER touch caption timing, word boundary events, or the ASS generator
+- NEVER touch the tombstone list, DELETE endpoint, or ElevenLabs auto-connect
+
+---
+
+## END OF SESSION CHECKLIST
+
+- Run pnpm tsc --noEmit in both api-server and video-generator — zero errors
+- Restart API server — confirm Server listening on port 8080 with no errors
+- Update replit.md: mark transparent WebM as either confirmed working or confirmed broken using chroma fallback
+- Do not leave the session with an untested or unknown state

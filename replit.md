@@ -108,8 +108,38 @@ artifacts/
 - Method: PUT to create, GET to poll
 - Body is **flat** (no `payload` wrapper).
 - `inputKind: "SSML"` is the only mode used. Azure removed `PreSynthesizedAudio` support from the avatar batch synthesis API in 2025 (returns `400 BadRequest: $.inputKind invalid + payload required`). To use ElevenLabs voices, generate the avatar with Azure TTS here, then swap the audio track in `ffmpegService.ts` via `elAudioPath`.
-- Green screen background `#00FF00FF` when `realism=true` (default)
+- **Background modes**:
+  - `realism=true` + no `bgImageUrl` → `videoFormat:"webm"`, `videoCodec:"vp9"`, `backgroundColor:"transparent"` (transparent WebM with alpha channel)
+  - `bgImageUrl` set → mp4/h264, Azure composites the background image server-side
+  - Legacy chroma path (mp4/h264 + `#00FF00FF`) is still wired in `avatarService.ts` and `ffmpegService.ts` — flip `useTransparent=false` in `routes/generate.ts` to fall back
 - Poll interval: 6s, max wait: 25min
+
+### Transparent WebM — Verification Status
+
+Status: **wired and code-reviewed; pending end-to-end visual confirmation on next user-triggered render.**
+
+The first render after this change has not yet happened — the latest file in `outputs/` is `avatar_raw.mp4` from before the switch. After the next generation completes, run this verification recipe:
+
+```bash
+ffprobe -v error -show_streams artifacts/api-server/outputs/avatar_raw.webm \
+  | grep -E "^(codec_name|pix_fmt)="
+```
+
+Expected output:
+```
+codec_name=vp9
+pix_fmt=yuva420p
+```
+
+- `pix_fmt=yuva420p` (the trailing `a` is the alpha plane) → Azure honoured the transparent request → the `useTransparentAvatar` overlay branch in `ffmpegService.ts` will get clean alpha edges.
+- `pix_fmt=yuv420p` (no `a`) → Azure ignored the transparent request and produced an opaque WebM. Do NOT try to force it. Fall back to chroma key by flipping the single constant `PREFER_TRANSPARENT_WEBM = false` in `routes/generate.ts` — that automatically re-enables the green-screen mp4 + chroma path everywhere. Then document the failure here under a new "Known Azure Limitations" section.
+
+Visual quality check on the final composited mp4 — avatar edges (hair, shoulders) must have:
+- Zero green tint
+- Zero halo/fringe
+- Natural blend with no hard cutout edge
+
+If edges look worse than the previous green-screen output, revert via the procedure above.
 
 ### Environment Secrets Required
 
