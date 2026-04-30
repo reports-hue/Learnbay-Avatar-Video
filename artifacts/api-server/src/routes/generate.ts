@@ -185,11 +185,13 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     const pacingRate = PACING_SSML_RATE[pacing] ?? "0.95";
     let wordTimings: import("../services/speech.js").WordTiming[] = [];
     let elAudioUrl: string | undefined;
+    let elAudioPath: string | undefined;
 
     if (isElevenLabs && elVoiceId) {
       if (!elApiKey) throw new Error("ElevenLabs API key is required. Add it in Voice Settings.");
       updateJob(jobId, { step: "elevenlabs", percent: 20, message: "Synthesizing voice with ElevenLabs…" });
       const elResult = await synthesizeElevenLabs(script, elVoiceId, elApiKey);
+      elAudioPath = path.join(outputsDir, elResult.filename);
       const publicDomain = process.env.REPLIT_DEV_DOMAIN || process.env.PUBLIC_URL;
       if (!publicDomain) throw new Error("Cannot determine public URL for ElevenLabs audio. Set REPLIT_DEV_DOMAIN or PUBLIC_URL.");
       elAudioUrl = `https://${publicDomain}/api/video/${elResult.filename}`;
@@ -245,6 +247,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       useGreenScreen,
       realism,
       script,
+      elAudioPath,
     });
 
     // ── Step 5: Thumbnail ──

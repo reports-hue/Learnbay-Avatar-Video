@@ -54,7 +54,7 @@ artifacts/
 | **Voice Pacing** | 3-level Pacing slider: Slow (0.88×), Natural (0.95×), Fast (1.05×). Maps to SSML `<prosody rate>`. |
 | **Voice Preview** | `POST /api/preview-voice` (Azure) or `POST /api/elevenlabs/preview` (ElevenLabs) — 5s TTS sample returned as MP3 |
 | **ElevenLabs Voices** | Optional: user enters their ElevenLabs API key in Voice Browser → stored in localStorage. Voices fetched from ElevenLabs API, prefixed `el:voiceId` in state. Full 643-voice Azure browser + ElevenLabs library in a tabbed modal. |
-| **ElevenLabs TTS** | When `voice` starts with `el:`, `synthesizeElevenLabs()` calls `/v1/text-to-speech/{id}/with-timestamps`, saves MP3 to `outputs/`, constructs public URL using `REPLIT_DEV_DOMAIN`, passes to Azure Avatar as `inputKind: "PreSynthesizedAudio"`. ElevenLabs character-alignment → `WordTiming[]` for captions. |
+| **ElevenLabs TTS** | When `voice` starts with `el:`, `synthesizeElevenLabs()` calls `/v1/text-to-speech/{id}/with-timestamps`, saves MP3 to `outputs/`. Avatar is rendered with **Azure TTS** (SSML); the ElevenLabs MP3 is then **swapped in as the speech track during FFmpeg post-processing** (`elAudioPath` → speech source `[N:a]`). Lip-sync follows Azure mouth movements, but the listener hears the ElevenLabs voice. ElevenLabs character-alignment → `WordTiming[]` for captions. |
 | **Word-by-Word Captions** | SSML-based word timings with micro-rate variation per sentence, `express-as style="chat"`. 3-word sliding window. Pill background (BorderStyle=3, BackColour semi-transparent). |
 | **Opening Hook Text** | First sentence displayed 0–2s with fade-out via ASS subtitles at top of frame (no drawtext needed) |
 | **Audio Enhancement** | `loudnorm=I=-16:TP=-1.5:LRA=11` (broadcast -16 LUFS) + `aecho=0.8:0.9:40:0.3` (subtle room reverb). Music at 6% with afade in/out. |
@@ -70,7 +70,7 @@ artifacts/
 
 - `src/services/openai.ts` — Natural human-speech script prompts, `generateScript()`, `generateBrandTheme()`, `analyzeBrand()`
 - `src/services/speech.ts` — SSML-based `getWordTimings()` with `speakSsmlAsync`, micro-rate variation, emphasis for CAPS, chat style, estimation fallback
-- `src/services/avatarService.ts` — `generateAvatarVideo()`: SSML or `PreSynthesizedAudio` (ElevenLabs), green screen in realism mode
+- `src/services/avatarService.ts` — `generateAvatarVideo()`: always SSML/Azure TTS. (Azure removed `PreSynthesizedAudio` from the avatar batch synthesis API in 2025; ElevenLabs audio is swapped in during ffmpeg post-processing instead.) Green screen in realism mode.
 - `src/services/elevenLabsService.ts` — `listElevenLabsVoices()`, `synthesizeElevenLabs()` (with-timestamps → saves MP3 + word timings), `previewElevenLabsVoice()`
 - `src/services/ffmpegService.ts` — Full post-processing: chroma key, Ken Burns, color grade, grain, hook text, 3-word captions, audio loudnorm, thumbnail extraction
 - `src/routes/voices.ts` — `GET /api/voices` (Azure, 1hr cache), `GET /api/elevenlabs/voices` (ElevenLabs, x-elevenlabs-key header), `POST /api/elevenlabs/preview`, `POST /api/upload-photo`
@@ -102,8 +102,8 @@ artifacts/
 
 - Endpoint: `https://{AZURE_SPEECH_REGION}.api.cognitive.microsoft.com/avatar/batchsyntheses/{jobId}?api-version=2024-04-15-preview`
 - Method: PUT to create, GET to poll
-- `inputKind: "SSML"` for Azure TTS voices (prosody, breathing, express-as, sentence silence)
-- `inputKind: "PreSynthesizedAudio"` + `audioUrl` when using ElevenLabs voices
+- Body is **flat** (no `payload` wrapper).
+- `inputKind: "SSML"` is the only mode used. Azure removed `PreSynthesizedAudio` support from the avatar batch synthesis API in 2025 (returns `400 BadRequest: $.inputKind invalid + payload required`). To use ElevenLabs voices, generate the avatar with Azure TTS here, then swap the audio track in `ffmpegService.ts` via `elAudioPath`.
 - Green screen background `#00FF00FF` when `realism=true` (default)
 - Poll interval: 6s, max wait: 25min
 

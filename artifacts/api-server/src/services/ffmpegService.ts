@@ -279,6 +279,7 @@ export interface PostProcessOptions {
   useGreenScreen?: boolean;
   realism?: boolean;        // default true — enables chroma key, grain, Ken Burns, enhanced audio
   script?: string;          // used for opening hook text
+  elAudioPath?: string;     // local path to ElevenLabs MP3 — when set, replaces the avatar's Azure TTS audio
 }
 
 export async function postProcessAvatarVideo(
@@ -354,8 +355,9 @@ export async function postProcessAvatarVideo(
   }
 
   const bgImagePath = options.bgImagePath && existsSync(options.bgImagePath) ? options.bgImagePath : null;
+  const elAudioPath = options.elAudioPath && existsSync(options.elAudioPath) ? options.elAudioPath : null;
 
-  logger.info({ platform: options.platform, isVertical, outW, outH, useGreenScreen, useGradient, hasBgImage: !!bgImagePath, realism, captionStyle, duration }, "Post-processing avatar video");
+  logger.info({ platform: options.platform, isVertical, outW, outH, useGreenScreen, useGradient, hasBgImage: !!bgImagePath, hasElAudio: !!elAudioPath, realism, captionStyle, duration }, "Post-processing avatar video");
 
   return new Promise((resolve, reject) => {
     let cmd = ffmpeg();
@@ -381,6 +383,15 @@ export async function postProcessAvatarVideo(
       cmd = cmd.input(musicPath).inputOptions(["-stream_loop -1"]);
       musicIdx = inputIndex++;
     }
+
+    let elAudioIdx = -1;
+    if (elAudioPath) {
+      cmd = cmd.input(elAudioPath);
+      elAudioIdx = inputIndex++;
+    }
+
+    // Speech audio source: prefer ElevenLabs MP3 when supplied, else use Azure TTS from the avatar video
+    const speechSrcIdx = elAudioIdx >= 0 ? elAudioIdx : avatarIdx;
 
     const fp: string[] = [];
 
@@ -529,29 +540,31 @@ export async function postProcessAvatarVideo(
     fp.push(`[${lastV}]fps=30[vout]`);
 
     // ── Audio chain ──
+    // When ElevenLabs audio is supplied, use it as the speech source instead of the
+    // avatar's Azure TTS track. (Azure no longer supports lip-sync to external audio,
+    // so the avatar mouth movements follow Azure TTS, but the listener hears ElevenLabs.)
     const af: string[] = [];
     const musicFadeOut = Math.max(0, duration - 1.5);
 
     if (musicIdx >= 0) {
       if (realism) {
-        // Enhanced: loudnorm + subtle room echo, music with proper fade
         af.push(
-          `[${avatarIdx}:a]aformat=fltp:44100:stereo,loudnorm=I=-16:TP=-1.5:LRA=11,aecho=0.8:0.9:40:0.3[speech_e]`,
+          `[${speechSrcIdx}:a]aformat=fltp:44100:stereo,loudnorm=I=-16:TP=-1.5:LRA=11,aecho=0.8:0.9:40:0.3[speech_e]`,
           `[${musicIdx}:a]aformat=fltp:44100:stereo,volume=0.06,afade=t=in:st=0:d=1:curve=qua,afade=t=out:st=${musicFadeOut}:d=1.5:curve=qua[bg_music]`,
           `[speech_e][bg_music]amix=inputs=2:duration=first[aout]`
         );
       } else {
         af.push(
-          `[${avatarIdx}:a]aformat=fltp:44100:stereo,volume=1.0[speech]`,
+          `[${speechSrcIdx}:a]aformat=fltp:44100:stereo,volume=1.0[speech]`,
           `[${musicIdx}:a]aformat=fltp:44100:stereo,volume=0.07[bg_music]`,
           `[speech][bg_music]amix=inputs=2:duration=first[aout]`
         );
       }
     } else {
       if (realism) {
-        af.push(`[${avatarIdx}:a]aformat=fltp:44100:stereo,loudnorm=I=-16:TP=-1.5:LRA=11,aecho=0.8:0.9:40:0.3[aout]`);
+        af.push(`[${speechSrcIdx}:a]aformat=fltp:44100:stereo,loudnorm=I=-16:TP=-1.5:LRA=11,aecho=0.8:0.9:40:0.3[aout]`);
       } else {
-        af.push(`[${avatarIdx}:a]aformat=fltp:44100:stereo[aout]`);
+        af.push(`[${speechSrcIdx}:a]aformat=fltp:44100:stereo[aout]`);
       }
     }
 

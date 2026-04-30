@@ -115,9 +115,11 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
   const key = process.env.AZURE_SPEECH_KEY ?? "";
   const jobId = uuidv4();
 
-  // Use 2024-04-15-preview because it supports `inputKind: "PreSynthesizedAudio"`
-  // (lip-sync to externally-supplied audio such as ElevenLabs). The 2024-08-01
-  // GA version dropped that input kind and only accepts PlainText/SSML.
+  // Pin to 2024-04-15-preview for stable behaviour. As of 2025, Azure Avatar
+  // Batch Synthesis no longer accepts `PreSynthesizedAudio` — only PlainText
+  // and SSML are valid `inputKind` values. To still use third-party voices
+  // (e.g. ElevenLabs), generate the avatar with Azure TTS here, then swap the
+  // audio track during FFmpeg post-processing.
   const baseUrl = `https://${region}.api.cognitive.microsoft.com/avatar/batchsyntheses/${jobId}?api-version=2024-04-15-preview`;
 
   // In realism mode: use green screen background for chroma key compositing
@@ -139,28 +141,21 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
     avatarConfig["backgroundImage"] = config.bgImageUrl;
   }
 
-  let requestBody: Record<string, unknown>;
+  // Azure batch synthesis expects a flat top-level body (no `payload` wrapper).
+  // We always use SSML/Azure TTS for the avatar render — see comment above.
+  // If `config.audioUrl` is set, the caller (route handler) is responsible for
+  // swapping that audio into the final video during FFmpeg post-processing.
+  const ssml = buildSsml(config.script, config.voice, config.voiceStyle, config.pacing ?? "natural");
+  const requestBody = {
+    synthesisConfig: { voice: config.voice },
+    customVoices: {},
+    avatarConfig,
+    inputKind: "SSML",
+    inputs: [{ content: ssml }],
+  };
 
   if (config.audioUrl) {
-    // Pre-synthesized audio mode (e.g. ElevenLabs) — avatar lip-syncs to external audio
-    logger.info({ audioUrl: config.audioUrl }, "Using PreSynthesizedAudio mode");
-    requestBody = {
-      synthesisConfig: { voice: config.voice },
-      customVoices: {},
-      avatarConfig,
-      inputKind: "PreSynthesizedAudio",
-      inputs: [{ audioUrl: config.audioUrl }],
-    };
-  } else {
-    // Default: SSML with Azure TTS
-    const ssml = buildSsml(config.script, config.voice, config.voiceStyle, config.pacing ?? "natural");
-    requestBody = {
-      synthesisConfig: { voice: config.voice },
-      customVoices: {},
-      avatarConfig,
-      inputKind: "SSML",
-      inputs: [{ content: ssml }],
-    };
+    logger.info({ audioUrl: config.audioUrl }, "External audio supplied — avatar will be rendered with Azure TTS and audio swapped in post-processing");
   }
 
   logger.info({ jobId, character: config.character, style: config.style, voice: config.voice, pacing: config.pacing, realism: config.realism !== false, bgColor: effectiveBgColor }, "Submitting avatar synthesis job");
