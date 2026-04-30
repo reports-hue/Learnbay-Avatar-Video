@@ -28,6 +28,12 @@ export interface AvatarJobConfig {
   realism?: boolean;
   // When set, use pre-synthesized audio (e.g. ElevenLabs) instead of Azure TTS
   audioUrl?: string;
+  // When true: request a transparent-background WebM (VP9) so the avatar arrives
+  // with a real alpha channel — no green-screen, no chroma key, no fringe. Azure
+  // requires webm + vp9 + backgroundColor "transparent" for this; mp4/h264 do
+  // NOT support alpha. Cannot be combined with bgImageUrl (Azure would composite
+  // the image and there would be nothing to be transparent over).
+  useTransparent?: boolean;
 }
 
 // Supported SSML speaking styles per Azure TTS voice
@@ -122,16 +128,35 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
   // audio track during FFmpeg post-processing.
   const baseUrl = `https://${region}.api.cognitive.microsoft.com/avatar/batchsyntheses/${jobId}?api-version=2024-04-15-preview`;
 
-  // In realism mode: use green screen background for chroma key compositing
-  const effectiveBgColor = config.realism !== false ? "#00FF00FF" : config.backgroundColor;
+  // Three modes for the avatar background:
+  //   1. transparent WebM  (preferred for realism — true alpha, no chroma key)
+  //   2. green screen mp4  (legacy fallback path; still wired in case Azure
+  //      WebM is ever unavailable — chromakey filter remains in ffmpegService)
+  //   3. solid color / Azure-composited bg image (when bgImageUrl is provided)
+  //
+  // useTransparent CANNOT be combined with bgImageUrl — Azure would composite
+  // the image and nothing would be transparent. The route handler is expected
+  // to enforce this, but we double-check here for safety.
+  const useTransparent =
+    config.useTransparent === true && !config.bgImageUrl;
+  const useGreenScreen =
+    !useTransparent && config.realism !== false && !config.bgImageUrl;
+  const effectiveBgColor = useGreenScreen
+    ? "#00FF00FF"
+    : config.bgImageUrl
+      ? "#000000FF"
+      : config.backgroundColor;
 
   const avatarConfig: Record<string, unknown> = {
     customized: false,
     talkingAvatarCharacter: config.character || "lisa",
     ...(config.style ? { talkingAvatarStyle: config.style } : {}),
-    videoFormat: "mp4",
-    videoCodec: "h264",
-    backgroundColor: config.bgImageUrl ? "#000000FF" : effectiveBgColor,
+    // Transparent path REQUIRES webm + vp9 + backgroundColor "transparent".
+    // mp4/h264 do not support alpha channels — Azure will silently ignore
+    // backgroundColor:"transparent" and produce a black background.
+    videoFormat: useTransparent ? "webm" : "mp4",
+    videoCodec: useTransparent ? "vp9" : "h264",
+    backgroundColor: useTransparent ? "transparent" : effectiveBgColor,
     bitrateKbps: 4000,
     subtitleType: "none",
   };
@@ -158,7 +183,21 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
     logger.info({ audioUrl: config.audioUrl }, "External audio supplied — avatar will be rendered with Azure TTS and audio swapped in post-processing");
   }
 
-  logger.info({ jobId, character: config.character, style: config.style, voice: config.voice, pacing: config.pacing, realism: config.realism !== false, bgColor: effectiveBgColor }, "Submitting avatar synthesis job");
+  logger.info(
+    {
+      jobId,
+      character: config.character,
+      style: config.style,
+      voice: config.voice,
+      pacing: config.pacing,
+      realism: config.realism !== false,
+      bgColor: useTransparent ? "transparent" : effectiveBgColor,
+      videoFormat: avatarConfig["videoFormat"],
+      videoCodec: avatarConfig["videoCodec"],
+      mode: useTransparent ? "transparent-webm" : useGreenScreen ? "green-screen-mp4" : "solid-bg-mp4",
+    },
+    "Submitting avatar synthesis job"
+  );
 
   await axios.put(baseUrl, requestBody, {
     headers: {
@@ -191,9 +230,13 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
     if (status === "Succeeded") {
       const videoUrl = outputs?.result;
       if (!videoUrl) throw new Error("Avatar job succeeded but no result URL found");
-      const outputPath = path.join(outputsDir, "avatar_raw.mp4");
+      // Match the on-disk extension to the format we requested so FFmpeg/ffprobe
+      // pick the right demuxer. mp4 vs webm container both work but downstream
+      // checks key off the path.
+      const outputExt = useTransparent ? "webm" : "mp4";
+      const outputPath = path.join(outputsDir, `avatar_raw.${outputExt}`);
       await downloadFile(videoUrl, outputPath);
-      logger.info({ outputPath }, "Avatar video downloaded");
+      logger.info({ outputPath, transparent: useTransparent }, "Avatar video downloaded");
       return outputPath;
     }
 

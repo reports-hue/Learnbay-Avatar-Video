@@ -48,9 +48,9 @@ artifacts/
 | Feature | Details |
 |---|---|
 | **AI Script Generation** | Azure OpenAI (gpt-4o-mini), 5 styles: Viral Hook, Listicle, Story, Educational, Sales. Natural spoken-language prompts forbid bullet lists, require contractions and filler transitions. |
-| **Realism Mode** (default ON) | Green screen chroma key compositing, color grade (`eq`), film grain (`noise`), Ken Burns bg zoom, broadcast audio (loudnorm + echo), opening hook text overlay |
-| **Avatar Synthesis** | Azure AI Avatar Batch Synthesis API (PUT + poll). Always uses SSML with prosody rate/pitch, sentence boundary silence, breathing breaks. Green screen (`#00FF00FF`) bg for chroma key. |
-| **Chroma Key Compositing** | `chromakey=color=0x00ff00:similarity=0.25:blend=0.05` — avatar edges blend naturally into scene |
+| **Realism Mode** (default ON) | **Transparent WebM avatar** (alpha-channel overlay, no chroma key), color grade (`eq`), film grain (`noise`), Ken Burns bg zoom, broadcast audio (loudnorm + echo), opening hook text overlay |
+| **Avatar Synthesis** | Azure AI Avatar Batch Synthesis API (PUT + poll, api-version `2024-04-15-preview`). Always uses SSML with prosody rate/pitch, sentence boundary silence, breathing breaks. **Realism mode (no bg image) → `videoFormat:"webm"` + `videoCodec:"vp9"` + `backgroundColor:"transparent"`** so the avatar arrives with a real alpha channel. Falls back to mp4/h264 + `#00FF00FF` green screen when `useTransparent=false` (legacy chroma path retained but currently disabled in `routes/generate.ts`). When `bgImageUrl` is set, transparent mode is skipped and Azure composites the bg server-side. |
+| **Transparent Overlay** | `[av]format=yuva420p,scale,…overlay=…:format=auto` — alpha respected natively. No `chromakey`, no `despill`, no green halo. The legacy `chromakey=color=0x00ff00:similarity=0.30:blend=0.10` + `despill=type=green:mix=0.5` branch is still in `ffmpegService.ts` as a fallback while the transparent path is being validated end-to-end. |
 | **Voice Pacing** | 3-level Pacing slider: Slow (0.88×), Natural (0.95×), Fast (1.05×). Maps to SSML `<prosody rate>`. |
 | **Voice Preview** | `POST /api/preview-voice` (Azure) or `POST /api/elevenlabs/preview` (ElevenLabs) — 5s TTS sample returned as MP3 |
 | **ElevenLabs Voices** | Optional: user enters their ElevenLabs API key in Voice Browser → stored in localStorage. Voices fetched from ElevenLabs API, prefixed `el:voiceId` in state. Full 643-voice Azure browser + ElevenLabs library in a tabbed modal. |
@@ -74,9 +74,9 @@ artifacts/
 
 - `src/services/openai.ts` — Natural human-speech script prompts, `generateScript()`, `generateBrandTheme()`, `analyzeBrand()`
 - `src/services/speech.ts` — SSML-based `getWordTimings()` with `speakSsmlAsync`, micro-rate variation, emphasis for CAPS, chat style, estimation fallback
-- `src/services/avatarService.ts` — `generateAvatarVideo()`: always SSML/Azure TTS. (Azure removed `PreSynthesizedAudio` from the avatar batch synthesis API in 2025; ElevenLabs audio is swapped in during ffmpeg post-processing instead.) Green screen in realism mode.
+- `src/services/avatarService.ts` — `generateAvatarVideo()`: always SSML/Azure TTS. (Azure removed `PreSynthesizedAudio` from the avatar batch synthesis API in 2025; ElevenLabs audio is swapped in during ffmpeg post-processing instead.) `useTransparent` flag → requests transparent WebM/VP9 (saves as `avatar_raw.webm`); otherwise mp4/h264. Three modes: transparent-webm (default in realism, no bg image), green-screen-mp4 (legacy fallback), solid-bg-mp4 / Azure-composited bg image.
 - `src/services/elevenLabsService.ts` — `listElevenLabsVoices()`, `synthesizeElevenLabs()` (with-timestamps → saves MP3 + word timings), `previewElevenLabsVoice()`
-- `src/services/ffmpegService.ts` — Full post-processing: chroma key, Ken Burns, color grade, grain, hook text, 3-word captions, audio loudnorm, thumbnail extraction
+- `src/services/ffmpegService.ts` — Full post-processing: transparent-WebM overlay (or chroma key fallback), Ken Burns, color grade, grain, hook text, 3-word captions, audio loudnorm, thumbnail extraction. `useTransparentAvatar` takes precedence over `useGreenScreen`.
 - `src/routes/voices.ts` — `GET /api/voices` (Azure, 1hr cache), `GET /api/elevenlabs/voices` (ElevenLabs, x-elevenlabs-key header), `POST /api/elevenlabs/preview`, `POST /api/upload-photo`
 - `src/routes/generate.ts` — `POST /api/generate` (SSE), `GET /api/video/:filename`, `POST /api/preview-voice`
 
@@ -84,7 +84,7 @@ artifacts/
 
 1. Background source, oversized 3% (`gradients` or `color`)
 2. Ken Burns crop pan on background
-3. Chroma key avatar compositing (`chromakey` → `scale` → `overlay`)
+3. Avatar compositing — **transparent WebM path**: `format=yuva420p` → `scale` → `overlay …:format=auto` (alpha respected). Legacy fallback: `chromakey` → `despill` → `scale` → `overlay`.
 4. Color grade (`eq`) + sharpen (`unsharp`) + vignette
 5. Lower-third dark overlay (2-layer `drawbox`)
 6. Brand accent line (`drawbox`)

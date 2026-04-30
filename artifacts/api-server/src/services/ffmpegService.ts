@@ -289,7 +289,11 @@ export interface PostProcessOptions {
   captionStyle?: CaptionStyle;
   outputFilename?: string;
   useGreenScreen?: boolean;
-  realism?: boolean;        // default true — enables chroma key, grain, Ken Burns, enhanced audio
+  // When true: avatar source is a transparent WebM (VP9) with a real alpha
+  // channel. Skip chromakey/despill entirely and overlay directly — no green
+  // fringe, no halo, perfect edges. Mutually exclusive with useGreenScreen.
+  useTransparentAvatar?: boolean;
+  realism?: boolean;        // default true — enables grain, Ken Burns, enhanced audio
   script?: string;          // used for opening hook text
   elAudioPath?: string;     // local path to ElevenLabs MP3 — when set, replaces the avatar's Azure TTS audio
 }
@@ -325,7 +329,9 @@ export async function postProcessAvatarVideo(
 
   const isVertical = VERTICAL_PLATFORMS.has(options.platform ?? "");
   const realism = options.realism !== false; // default true
-  const useGreenScreen = options.useGreenScreen === true;
+  const useTransparentAvatar = options.useTransparentAvatar === true;
+  // Transparent path takes precedence — never run chromakey on an alpha source.
+  const useGreenScreen = !useTransparentAvatar && options.useGreenScreen === true;
 
   const outW = isVertical ? 1080 : 1920;
   const outH = isVertical ? 1920 : 1080;
@@ -391,7 +397,25 @@ export async function postProcessAvatarVideo(
   const bgImagePath = options.bgImagePath && existsSync(options.bgImagePath) ? options.bgImagePath : null;
   const elAudioPath = options.elAudioPath && existsSync(options.elAudioPath) ? options.elAudioPath : null;
 
-  logger.info({ platform: options.platform, isVertical, outW, outH, useGreenScreen, useGradient, hasBgImage: !!bgImagePath, hasElAudio: !!elAudioPath, realism, captionStyle, avatarDuration, elDuration, retimeRatio: useRetime ? retimeRatio : 1, duration }, "Post-processing avatar video");
+  logger.info(
+    {
+      platform: options.platform,
+      isVertical,
+      outW,
+      outH,
+      avatarMode: useTransparentAvatar ? "transparent-webm" : useGreenScreen ? "green-screen-chroma" : "opaque-overlay",
+      useGradient,
+      hasBgImage: !!bgImagePath,
+      hasElAudio: !!elAudioPath,
+      realism,
+      captionStyle,
+      avatarDuration,
+      elDuration,
+      retimeRatio: useRetime ? retimeRatio : 1,
+      duration,
+    },
+    "Post-processing avatar video"
+  );
 
   return new Promise((resolve, reject) => {
     let cmd = ffmpeg();
@@ -480,7 +504,25 @@ export async function postProcessAvatarVideo(
       logger.info({ avatarDuration, elDuration, retimeRatio }, "Retiming avatar video to match ElevenLabs audio");
     }
 
-    if (useGreenScreen) {
+    if (useTransparentAvatar) {
+      // Transparent WebM (VP9) — avatar already has a real alpha channel.
+      // Skip chromakey/despill entirely; just scale and overlay. The overlay
+      // filter respects source alpha by default, so edges are pixel-perfect
+      // with no green halo. `format=yuva420p` keeps alpha through the scale.
+      if (isVertical) {
+        fp.push(`[${avSrc}]format=yuva420p,scale=-2:${outH}[av_tall]`);
+        fp.push(`[av_tall]crop=${outW}:${outH}:(iw-${outW})/2:0[av_s]`);
+        fp.push(`[bg][av_s]overlay=0:0:format=auto[av_framed]`);
+      } else {
+        const avatarH = Math.round(outH * 0.88);
+        const avatarY = outH - avatarH - 30;
+        fp.push(`[${avSrc}]format=yuva420p,scale=-2:${avatarH}[av_s]`);
+        fp.push(`[bg][av_s]overlay=(W-w)/2:${avatarY}:format=auto[av_framed]`);
+      }
+    } else if (useGreenScreen) {
+      // Legacy chroma key path — kept as a documented fallback while the
+      // transparent WebM path is being validated end-to-end. Once confirmed
+      // working in production this branch can be removed.
       fp.push(`[${avSrc}]chromakey=color=0x00ff00:similarity=0.30:blend=0.10[ck_pre]`);
       fp.push(`[ck_pre]despill=type=green:mix=0.5:expand=0[ck_out]`);
       if (isVertical) {

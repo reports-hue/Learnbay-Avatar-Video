@@ -1,0 +1,122 @@
+# AI Video Generation Platform — Master Production Prompt
+
+Read this entire prompt before touching any file. This is the authoritative spec for the project. Every rule here was learned through real failures — do not re-discover them.
+
+---
+
+## SINGLE NEW TASK TO IMPLEMENT
+
+Switch the Azure Avatar API to request a transparent WebM background instead of green screen. This eliminates the FFmpeg chroma key step entirely and gives perfect avatar edges with zero green fringe.
+
+Steps:
+1. In avatarService.ts: set videoFormat "webm", videoCodec "vp9", backgroundColor "transparent" in the avatar batch synthesis request body
+2. The API returns a .webm file with a real alpha channel — no green screen, no chroma key needed
+3. In ffmpegService.ts: remove the colorkey/chromakey filter. Overlay the WebM directly onto the background using FFmpeg overlay filter — transparency is already baked in
+4. Update the avatar file download to save as .webm not .mp4
+5. Test that avatar edges are clean with no green fringe or halo before marking done
+
+NEVER use videoFormat "mp4" with backgroundColor "transparent" — Azure requires webm+vp9 for transparent output
+NEVER remove the chroma filter without first confirming the WebM transparent path works end-to-end
+
+---
+
+## HARD RULES — AZURE API — NEVER VIOLATE
+
+- NEVER use PreSynthesizedAudio input kind — permanently removed by Azure
+- NEVER change avatar API version from 2024-04-15-preview — it is the only confirmed working version
+- NEVER set avatar bitrateKbps above 4000 — Azure rejects higher values, confirmed
+- NEVER send output_compression to gpt-image-1 — Azure rejects it for all formats
+- NEVER request PNG from gpt-image-1 — always JPEG
+- NEVER log full axios error objects — they expose API keys. Log status + message only
+- NEVER remove logger redaction for Authorization, api-key, xi-api-key, Ocp-Apim-Subscription-Key
+- NEVER wrap the avatar request body in a payload object — flat JSON only
+
+---
+
+## HARD RULES — CAPTION TIMING — MOST CRITICAL
+
+- NEVER calculate caption timing from character count, word count, or WPM estimates
+- NEVER use fixed duration per subtitle line
+- NEVER generate the ASS file before TTS synthesis completes and word timestamps are collected
+- NEVER silently fall back to estimated timing — if Azure SDK returns zero word boundary events, throw a clear error
+- The function estimateWordTimings() must not exist anywhere in the codebase — it is permanently deleted
+- USE Azure Speech SDK wordBoundary events: audioOffset in ticks divided by 10,000,000 = seconds; duration in ticks divided by 10,000,000 = seconds; text = the word
+- Group words into 3-5 word chunks. Chunk startTime = first word startSeconds. EndTime = last word startSeconds + durationSeconds
+- Add 50ms gap between consecutive chunks. Safety floor: end must be at least startSec + 40ms
+- Log first 5 word timestamps to server console on every render for verification
+
+---
+
+## HARD RULES — FFMPEG & VIDEO QUALITY
+
+- NEVER use FFmpeg preset medium or slower — renders become 3-5x longer and appear frozen to the user
+- NEVER draw a horizontal accent bar or stripe across the bottom of the video frame
+- NEVER apply aecho reverb to ElevenLabs audio — it is already studio-mastered
+- NEVER use caption BorderStyle 3 (opaque box) — only BorderStyle 1 (outline + shadow)
+- Output encoding: -preset fast -crf 18 -profile:v high -level 4.1 -g 60 -keyint_min 60
+- Audio output: -c:a aac -b:a 192k -ar 48000
+- If still using green screen before transparent WebM is confirmed: chroma key similarity=0.30, blend=0.10, plus despill filter
+
+---
+
+## HARD RULES — BACKGROUND IMAGES
+
+- NEVER use generic prompts — background must relate to the video topic
+- Prompts must always include: "ultra-wide shot, golden hour lighting, shallow depth of field, 8K photorealistic, hyper-detailed, anamorphic bokeh, no text, no logos, no people"
+- Topic to scene mapping: tech = futuristic office or neon city, finance = marble desk or skyline, fitness = gym or outdoor sunrise, lifestyle = minimal aesthetic apartment, food = styled kitchen, travel = scenic landscape, education = clean modern study
+- Output format: JPEG always. No output_compression param. Save as bg_[videoId].jpg
+
+---
+
+## RULES — LIP-SYNC & VOICE
+
+- NEVER try to fix ElevenLabs lip-sync drift by time-stretching the avatar video
+- Always show orange warning banner when ElevenLabs voice is selected: "Lip-sync will drift 50-150ms per word. Use Azure HD voice for perfect sync."
+- Mark Azure HD voices (Ava, Andrew) with "Perfect Lip-Sync" badge in the voice picker
+- ElevenLabs audio chain: loudnorm only (I=-14 LUFS). No reverb, no echo
+- Azure TTS audio chain: full treatment including aecho to humanize dry TTS output
+
+---
+
+## RULES — LIBRARY, STATE & RECOVERY
+
+- NEVER auto-recover videos on library mount — recovery is manual only via the Recover button
+- NEVER recover a video whose ID is in the tombstone list lm.deletedVideoIds in localStorage
+- DELETE /api/videos/:id endpoint must: sanitise ID (strip [^a-zA-Z0-9_-]), delete MP4 + thumbnail from disk, return 404 if neither exists
+- New videos added directly via addVideo() in CreateVideo — no auto-recovery needed for the happy path
+- Show real-time generation progress in UI: "Generating script → Synthesising voice → Rendering avatar → Compositing video → Done"
+
+---
+
+## RULES — ELEVENLABS INTEGRATION
+
+- ELEVENLABS_API_KEY stored server-side as env secret — users must never manually paste the key
+- On page load: call GET /api/elevenlabs/status — if hasServerKey true, auto-load voices and show "ElevenLabs auto-connected" badge
+- Never send the ElevenLabs key in API request headers when using server key
+
+---
+
+## VERIFY AFTER ANY CHANGE
+
+- Run pnpm tsc --noEmit in both api-server and video-generator — must be zero TypeScript errors
+- Restart API server and confirm: Server listening on port 8080 with no errors
+- After a test generation, confirm the ASS file contains real timestamps like 0:00:01.24, not zeros or uniform intervals
+- Confirm word boundary event count in logs matches approximate script word count within plus or minus 5
+- If transparent WebM was implemented: confirm avatar edges are clean with no halo or green fringe
+
+---
+
+## DO NOT TOUCH — CONFIRMED WORKING, LEAVE ALONE
+
+- Avatar API version: 2024-04-15-preview with flat SSML body
+- Avatar bitrate: 4000 kbps — Azure rejects anything higher, confirmed
+- FFmpeg output: -preset fast -crf 18 -profile:v high -level 4.1 -g 60 -keyint_min 60
+- Audio output: -c:a aac -b:a 192k -ar 48000
+- Caption style: BorderStyle 1, white bold text, pill background, max 5 words, 50ms inter-chunk gap
+- Azure Speech SDK word boundary events feeding real timestamps into ASS file — no estimates, no fallback
+- ElevenLabs /api/elevenlabs/status and /api/elevenlabs/voices auto-connect endpoints
+- Tombstone list: lm.deletedVideoIds in localStorage
+- DELETE /api/videos/:id with path-traversal sanitisation
+- Logger redaction: Authorization, api-key, xi-api-key, Ocp-Apim-Subscription-Key
+- Image format: JPEG, no output_compression, cinematic prompts, topic-to-scene mapping
+- No auto-recovery on library mount — manual Recover button only

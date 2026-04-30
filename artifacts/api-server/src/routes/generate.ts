@@ -210,7 +210,13 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     updateJob(jobId, { step: "avatar_start", percent: 25, message: "Azure AI is rendering your avatar (2–5 min)…" });
 
     // ── Step 3: Avatar synthesis ──
-    const useGreenScreen = realism && !bgImageUrl;
+    // Transparent WebM path replaces the legacy green-screen + chroma key flow.
+    // It only kicks in when we'd otherwise be doing chroma keying (realism on,
+    // no Azure-side bg image). The legacy chroma path stays wired in case Azure
+    // ever rejects the transparent request — flip useTransparent to false to
+    // fall back. See ffmpegService.ts useGreenScreen branch.
+    const useTransparent = realism && !bgImageUrl;
+    const useGreenScreen = false; // disabled in favour of transparent WebM
     const azureBgColor = resolvedBgColor1 + "FF";
 
     const avatarConfig: AvatarJobConfig = {
@@ -224,6 +230,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       pacing,
       realism,
       audioUrl: elAudioUrl,
+      useTransparent,
     };
 
     const avatarVideoPath = await generateAvatarVideo(avatarConfig);
@@ -244,6 +251,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       captionStyle,
       outputFilename,
       useGreenScreen,
+      useTransparentAvatar: useTransparent,
       realism,
       script,
       elAudioPath,
