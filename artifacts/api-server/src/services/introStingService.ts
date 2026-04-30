@@ -128,12 +128,23 @@ export function buildLargeLogoFilters(
 ): string[] {
   if (!state.active) return [];
   const largeH = Math.round(cornerMaxH * state.largeLogoScale);
+  // Width cap: never let a wide wordmark overflow the frame. Without this,
+  // `scale=w=-1:h=H` ignores `force_original_aspect_ratio` (the directive
+  // only takes effect when BOTH w and h are positive integers) and a wide
+  // logo (e.g. Libraryminds at ~5:1) renders at width = 5 × largeH which
+  // can easily exceed `outW` on vertical 1080×1920 — the right edge gets
+  // clipped at the frame boundary. We constrain to 80% of frame width with
+  // 10% margin per side, then let `force_original_aspect_ratio=decrease`
+  // pick whichever bound is binding (height for square logos, width for
+  // wide wordmarks). Aspect ratio is preserved either way.
+  const largeMaxW = Math.round(outW * 0.80);
   const fadeInDur = state.largeLogoFadeInEnd; // starts at t=0
   const fadeOutDur = state.largeLogoFadeOutEnd - state.largeLogoFadeOutStart;
   return [
-    // Scale logo to the large size, force_original_aspect_ratio=decrease so
-    // wide wordmarks stay legible. format=yuva420p preserves alpha.
-    `[${logoSrcLabel}]scale=w=-1:h=${largeH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,format=yuva420p[large_logo_scaled]`,
+    // Scale logo to the large size, fitting within (largeMaxW × largeH).
+    // `force_original_aspect_ratio=decrease` shrinks to fit BOTH bounds
+    // while preserving aspect ratio. format=yuva420p preserves alpha.
+    `[${logoSrcLabel}]scale=w=${largeMaxW}:h=${largeH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,format=yuva420p[large_logo_scaled]`,
     // Fade in 0→largeLogoFadeInEnd, then fade out largeLogoFadeOutStart→largeLogoFadeOutEnd.
     `[large_logo_scaled]fade=t=in:st=0:d=${fadeInDur.toFixed(3)}:alpha=1,fade=t=out:st=${state.largeLogoFadeOutStart.toFixed(3)}:d=${fadeOutDur.toFixed(3)}:alpha=1[large_logo_anim]`,
     // Center on the frame.
