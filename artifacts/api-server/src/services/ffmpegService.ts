@@ -172,13 +172,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   const events: string[] = [];
 
+  // Spec: 50 ms gap between consecutive caption events to prevent visible run-together
+  const GAP_SEC = 0.05;
+
   for (let i = 0; i < wordTimings.length; i++) {
     const wt = wordTimings[i];
     const nextWt = wordTimings[i + 1];
-    const startTime = formatAssTime(Math.max(0, wt.startSec));
-    const endTime = nextWt
-      ? formatAssTime(nextWt.startSec)
-      : formatAssTime(wt.startSec + wt.durationSec + 0.25);
+    const startSec = Math.max(0, wt.startSec);
+    const startTime = formatAssTime(startSec);
+    const rawEndSec = nextWt
+      ? nextWt.startSec - GAP_SEC
+      : wt.startSec + wt.durationSec + 0.25;
+    // Never let end <= start (can happen if two boundaries are <50ms apart)
+    const endSec = Math.max(startSec + 0.04, rawEndSec);
+    const endTime = formatAssTime(endSec);
 
     const windowStart = Math.max(0, i - (WINDOW - 1));
     const windowWords = wordTimings.slice(windowStart, i + 1);
@@ -224,14 +231,19 @@ Style: Cap,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
+  // Spec: 50 ms gap between consecutive caption events
+  const GAP_SEC = 0.05;
   const events: string[] = [];
   for (let i = 0; i < wordTimings.length; i += CHUNK) {
     const chunk = wordTimings.slice(i, i + CHUNK);
-    const start = formatAssTime(chunk[0].startSec);
+    const startSec = chunk[0].startSec;
     const lastWord = chunk[chunk.length - 1];
-    const end = i + CHUNK < wordTimings.length
-      ? formatAssTime(wordTimings[i + CHUNK].startSec)
-      : formatAssTime(lastWord.startSec + lastWord.durationSec + 0.2);
+    const rawEndSec = i + CHUNK < wordTimings.length
+      ? wordTimings[i + CHUNK].startSec - GAP_SEC
+      : lastWord.startSec + lastWord.durationSec + 0.2;
+    const endSec = Math.max(startSec + 0.04, rawEndSec);
+    const start = formatAssTime(startSec);
+    const end = formatAssTime(endSec);
     const text = chunk.map((w) => w.word).join(" ");
     events.push(`Dialogue: 0,${start},${end},Cap,,0,0,0,,${text}`);
   }

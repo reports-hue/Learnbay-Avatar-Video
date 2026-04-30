@@ -62,10 +62,17 @@ export async function getWordTimings(
 ): Promise<WordTiming[]> {
   const key = process.env.AZURE_SPEECH_KEY ?? "";
   const region = process.env.AZURE_SPEECH_REGION ?? "eastus";
+  if (!key) {
+    throw new Error(
+      "AZURE_SPEECH_KEY is not set — cannot collect word boundary events. " +
+      "Captions require real Azure Speech SDK timestamps; estimates are not allowed."
+    );
+  }
 
   const speechConfig = sdk.SpeechConfig.fromSubscription(key, region);
   speechConfig.speechSynthesisVoiceName = voiceName;
 
+  // Pull-stream sink — we don't need the audio bytes, only the wordBoundary events
   const pullStream = sdk.AudioOutputStream.createPullStream();
   const audioConfig = sdk.AudioConfig.fromStreamOutput(pullStream);
   const synthesizer = new sdk.SpeechSynthesizer(speechConfig, audioConfig);
@@ -82,7 +89,11 @@ export async function getWordTimings(
     }
   };
 
-  logger.info({ voiceName, wordCount: script.split(/\s+/).length, pacingRate }, "Getting word timings via SSML");
+  const expectedWordCount = script.split(/\s+/).filter(Boolean).length;
+  logger.info(
+    { voiceName, expectedWordCount, pacingRate },
+    "Getting word timings via Azure Speech SDK wordBoundary events"
+  );
 
   const ssml = buildTimingSsml(script, voiceName, pacingRate);
 
@@ -91,32 +102,54 @@ export async function getWordTimings(
       ssml,
       (result) => {
         synthesizer.close();
-        if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
-          logger.info({ timingCount: timings.length }, "Word timings retrieved via SSML");
-          resolve(timings.length > 0 ? timings : estimateWordTimings(script));
-        } else {
-          logger.warn({ reason: result.reason }, "SSML timing synthesis failed, falling back to estimates");
-          resolve(estimateWordTimings(script));
+        if (result.reason !== sdk.ResultReason.SynthesizingAudioCompleted) {
+          // Hard rule: NEVER fall back to estimated timing. Fail loudly.
+          reject(
+            new Error(
+              `Azure Speech SDK synthesis did not complete (reason=${result.reason}). ` +
+              `Word boundary events cannot be derived; captions require real SDK timestamps.`
+            )
+          );
+          return;
         }
+        if (timings.length === 0) {
+          // Hard rule: NEVER fall back to estimated timing.
+          reject(
+            new Error(
+              "Azure Speech SDK returned zero wordBoundary events. " +
+              "Cannot generate captions without real per-word timestamps."
+            )
+          );
+          return;
+        }
+
+        // Verification logging — first 5 timestamps + drift check
+        const preview = timings.slice(0, 5).map((t) => ({
+          word: t.word,
+          start: +t.startSec.toFixed(3),
+          dur: +t.durationSec.toFixed(3),
+        }));
+        const drift = Math.abs(timings.length - expectedWordCount);
+        logger.info(
+          { timingCount: timings.length, expectedWordCount, drift, preview },
+          "Word timings retrieved from SDK wordBoundary events"
+        );
+        if (drift > 5) {
+          // Within ±5 is the spec tolerance — outside is a real signal something is wrong (SSML markup
+          // counted as words, voice mismatch, etc.). Surface as a warning but don't fail the render.
+          logger.warn(
+            { drift, expectedWordCount, actual: timings.length },
+            "Word timing count drift exceeds ±5 from script word count"
+          );
+        }
+        resolve(timings);
       },
       (err) => {
         synthesizer.close();
-        logger.warn({ err }, "Word timing synthesis error, using estimates");
-        resolve(estimateWordTimings(script));
+        // Hard rule: NEVER silently fall back. NEVER log full error objects (may contain keys).
+        // SDK error callback signature passes a string message.
+        reject(new Error(`Azure Speech SDK wordBoundary collection failed: ${String(err)}`));
       }
     );
-  });
-}
-
-function estimateWordTimings(script: string): WordTiming[] {
-  const WPM = 138; // Slightly slower to match 0.95 pacing rate
-  const secPerWord = 60 / WPM;
-  const words = script.replace(/[^\w\s'-]/g, " ").split(/\s+/).filter(Boolean);
-  let cursor = 0.5;
-  return words.map((word) => {
-    const duration = secPerWord * (1 + word.length * 0.015);
-    const timing: WordTiming = { word, startSec: cursor, durationSec: duration };
-    cursor += duration;
-    return timing;
   });
 }

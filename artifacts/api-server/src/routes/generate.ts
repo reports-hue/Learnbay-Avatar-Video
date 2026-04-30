@@ -201,11 +201,10 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
         durationSec: (t.end - t.start) / 1000,
       }));
     } else if (captionStyle !== "none") {
-      try {
-        wordTimings = await getWordTimings(script, voice, pacingRate);
-      } catch {
-        // captions will be skipped
-      }
+      // Hard rule: never silently fall back to estimated timing. If the SDK
+      // can't deliver real word-boundary events, fail the render with a clear
+      // error rather than shipping mistimed captions.
+      wordTimings = await getWordTimings(script, voice, pacingRate);
     }
 
     updateJob(jobId, { step: "avatar_start", percent: 25, message: "Azure AI is rendering your avatar (2–5 min)…" });
