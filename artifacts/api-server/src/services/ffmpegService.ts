@@ -675,9 +675,9 @@ export async function postProcessAvatarVideo(
 
     // ── 5. Subtle lower-third gradient (single very-soft layer) ──
     // Removed the second darker layer + the brand accent bar — both showed
-    // as visible horizontal seams in the frame. The captions sit on their
-    // own pill background (BorderStyle=3) so they don't need a heavy
-    // backing strip beneath them.
+    // as visible horizontal seams in the frame. Captions use BorderStyle=1
+    // (outline+shadow, per spec) so they read against the avatar without
+    // needing a heavy backing strip beneath them.
     const lt = lowerH;
     fp.push(`[${lastV}]drawbox=x=0:y=ih-${lt}:w=iw:h=${lt}:c=black@0.28:t=fill[with_lt]`);
     lastV = "with_lt";
