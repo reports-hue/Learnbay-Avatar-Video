@@ -36,6 +36,7 @@ interface ElVoice {
 const EL_KEY_LS = "el_api_key";
 const getElKey = () => localStorage.getItem(EL_KEY_LS) ?? "";
 const PENDING_JOB_KEY = "pending_video_job_id";
+const SERVER_EL_KEY_SENTINEL = "__server__";
 interface BrandTheme { bgColor1: string; bgColor2: string; accentColor: string }
 interface GenerationResult {
   videoId: string; videoUrl: string; thumbnailUrl?: string;
@@ -134,10 +135,11 @@ interface VBMProps {
   elVoices: ElVoice[] | null; loadingElVoices: boolean;
   elSearch: string; onElSearchChange: (v: string) => void;
   onFetchElVoices: (key: string) => void;
+  serverHasElKey: boolean;
 }
 
 function VoiceBrowserModal(props: VBMProps) {
-  const { tab, onTabChange, voices, loading, selected, search, onSearchChange, gender, onGenderChange, locale, onLocaleChange, hdOnly, onHdOnlyChange, onSelect, onClose, onPreview, isPreviewing, elApiKey, elKeyInput, onElKeyInput, onElKeySave, elVoices, loadingElVoices, elSearch, onElSearchChange } = props;
+  const { tab, onTabChange, voices, loading, selected, search, onSearchChange, gender, onGenderChange, locale, onLocaleChange, hdOnly, onHdOnlyChange, onSelect, onClose, onPreview, isPreviewing, elApiKey, elKeyInput, onElKeyInput, onElKeySave, elVoices, loadingElVoices, elSearch, onElSearchChange, serverHasElKey } = props;
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -275,7 +277,7 @@ function VoiceBrowserModal(props: VBMProps) {
         {tab === "elevenlabs" && (
           <>
             <div className="px-4 py-3 border-b border-border flex-shrink-0">
-              {!elApiKey ? (
+              {!elApiKey && !serverHasElKey ? (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">Enter your ElevenLabs API key to access your voices. Your key is saved locally and never stored on our servers.</p>
                   <div className="flex gap-2">
@@ -293,8 +295,13 @@ function VoiceBrowserModal(props: VBMProps) {
               ) : (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-emerald-600 flex items-center gap-1"><Check className="w-3 h-3" /> ElevenLabs connected</span>
-                    <button onClick={() => { onElKeySave(""); }} className="text-[10px] text-muted-foreground hover:text-red-500 ml-auto">Disconnect</button>
+                    <span className="text-[11px] text-emerald-600 flex items-center gap-1">
+                      <Check className="w-3 h-3" />
+                      {serverHasElKey && elApiKey === SERVER_EL_KEY_SENTINEL ? "ElevenLabs auto-connected" : "ElevenLabs connected"}
+                    </span>
+                    {elApiKey !== SERVER_EL_KEY_SENTINEL && (
+                      <button onClick={() => { onElKeySave(""); }} className="text-[10px] text-muted-foreground hover:text-red-500 ml-auto">Disconnect</button>
+                    )}
                   </div>
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
@@ -309,8 +316,8 @@ function VoiceBrowserModal(props: VBMProps) {
             </div>
             <div className="overflow-y-auto flex-1 p-4 space-y-1">
               {loadingElVoices && <div className="flex items-center justify-center py-12 text-sm text-muted-foreground gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading ElevenLabs voices…</div>}
-              {!loadingElVoices && elApiKey && elVoices?.length === 0 && <div className="text-center py-12 text-sm text-muted-foreground">No voices found. Check your API key.</div>}
-              {!loadingElVoices && !elApiKey && (
+              {!loadingElVoices && (elApiKey || serverHasElKey) && elVoices?.length === 0 && <div className="text-center py-12 text-sm text-muted-foreground">No voices found. Check your API key.</div>}
+              {!loadingElVoices && !elApiKey && !serverHasElKey && (
                 <div className="text-center py-12 text-sm text-muted-foreground">Connect your ElevenLabs account above to see your voices.</div>
               )}
               {!loadingElVoices && filteredEl.map(v => {
@@ -415,6 +422,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   const [loadingElVoices, setLoadingElVoices] = useState(false);
   const [elVoiceSearch, setElVoiceSearch] = useState("");
   const [elKeyInput, setElKeyInput] = useState(getElKey);
+  const [serverHasElKey, setServerHasElKey] = useState(false);
 
   // Custom photo upload (presenter badge in video)
   const [customPhotoUrl, setCustomPhotoUrl] = useState<string | null>(null);
@@ -545,6 +553,23 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    fetch("/api/elevenlabs/status")
+      .then(r => r.json())
+      .then((data: { hasServerKey: boolean }) => {
+        if (data.hasServerKey) {
+          setServerHasElKey(true);
+          if (!getElKey()) {
+            setElApiKey(SERVER_EL_KEY_SENTINEL);
+            setElKeyInput(SERVER_EL_KEY_SENTINEL);
+            fetchElVoices(SERVER_EL_KEY_SENTINEL);
+          }
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function fetchAllVoices() {
     if (allVoices) { setShowVoiceBrowser(true); return; }
     setShowVoiceBrowser(true);
@@ -562,13 +587,14 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   }
 
   async function fetchElVoices(key: string) {
-    if (!key.trim()) return;
+    const isServer = key === SERVER_EL_KEY_SENTINEL;
+    if (!isServer && !key.trim()) return;
     setLoadingElVoices(true);
     setElVoices(null);
     try {
-      const res = await fetch("/api/elevenlabs/voices", {
-        headers: { "x-elevenlabs-key": key.trim() },
-      });
+      const headers: Record<string, string> = {};
+      if (!isServer) headers["x-elevenlabs-key"] = key.trim();
+      const res = await fetch("/api/elevenlabs/voices", { headers });
       const data = await res.json() as ElVoice[] | { error: string };
       if (!res.ok) throw new Error((data as { error: string }).error ?? `HTTP ${res.status}`);
       setElVoices(data as ElVoice[]);
@@ -621,7 +647,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
         ? JSON.stringify({ voiceId: voice.slice(3) })
         : JSON.stringify({ voice });
       const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (isEl && elApiKey) headers["x-elevenlabs-key"] = elApiKey;
+      if (isEl && elApiKey && elApiKey !== SERVER_EL_KEY_SENTINEL) headers["x-elevenlabs-key"] = elApiKey;
 
       const res = await fetch(url, { method: "POST", headers, body });
       if (!res.ok) {
@@ -651,7 +677,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       realism,
       pacing,
       customPhotoUrl: customPhotoUrl || undefined,
-      elevenLabsKey: isEl && elApiKey ? elApiKey : undefined,
+      elevenLabsKey: isEl && elApiKey && elApiKey !== SERVER_EL_KEY_SENTINEL ? elApiKey : undefined,
     };
 
     if (brandMode === "saved" && hasBrand) {
@@ -1221,7 +1247,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             const url = isEl ? "/api/elevenlabs/preview" : "/api/preview-voice";
             const body = isEl ? JSON.stringify({ voiceId: v.slice(3) }) : JSON.stringify({ voice: v });
             const headers: Record<string, string> = { "Content-Type": "application/json" };
-            if (isEl && elApiKey) headers["x-elevenlabs-key"] = elApiKey;
+            if (isEl && elApiKey && elApiKey !== SERVER_EL_KEY_SENTINEL) headers["x-elevenlabs-key"] = elApiKey;
             fetch(url, { method: "POST", headers, body })
               .then(r => r.blob()).then(blob => {
                 const objUrl = URL.createObjectURL(blob);
@@ -1239,6 +1265,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
           elVoices={elVoices} loadingElVoices={loadingElVoices}
           elSearch={elVoiceSearch} onElSearchChange={setElVoiceSearch}
           onFetchElVoices={fetchElVoices}
+          serverHasElKey={serverHasElKey}
         />
       )}
 

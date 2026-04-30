@@ -101,7 +101,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hook,Arial,${fontSize},&H00FFFFFF,${accentAss},&H00000000,&HCC000000,-1,0,0,0,100,100,0.5,0,3,10,0,8,60,60,${marginV},1
+Style: Hook,Arial,${fontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,0.5,0,1,3,2,8,60,60,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -131,7 +131,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: CTA,Arial,${fontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2.5,0,2,28,28,${marginV},1
+Style: CTA,Arial,${fontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,1,2,28,28,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -164,7 +164,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,${baseFontSize},&H00FFFFFF,${accentAss},&H00000000,&HBB000000,-1,0,0,0,100,100,0,0,3,12,0,5,40,40,${captionY},1
+Style: Cap,Arial,${baseFontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,3,5,40,40,${captionY},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -218,7 +218,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,-1,0,0,0,100,100,1,0,3,12,0,5,40,40,${captionY},1
+Style: Cap,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,3,5,40,40,${captionY},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -426,7 +426,8 @@ export async function postProcessAvatarVideo(
     let lastV = "av_framed";
 
     if (useGreenScreen) {
-      fp.push(`[${avatarIdx}:v]chromakey=color=0x00ff00:similarity=0.25:blend=0.05[ck_out]`);
+      fp.push(`[${avatarIdx}:v]chromakey=color=0x00ff00:similarity=0.30:blend=0.10[ck_pre]`);
+      fp.push(`[ck_pre]despill=type=green:mix=0.5:expand=0[ck_out]`);
       if (isVertical) {
         // Portrait output: Azure returns landscape (1920×1080). Scale to full output
         // height so the avatar fills the frame top-to-bottom, then center-crop to

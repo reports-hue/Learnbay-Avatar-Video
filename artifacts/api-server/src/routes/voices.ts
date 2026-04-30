@@ -118,6 +118,12 @@ router.post("/upload-photo", upload.single("photo"), (req: Request, res: Respons
   res.json({ photoUrl, filename: req.file.filename, localPath: req.file.path });
 });
 
+// ─── GET /api/elevenlabs/status ─────────────────────────────────
+router.get("/elevenlabs/status", (_req: Request, res: Response) => {
+  const hasServerKey = !!(process.env.ELEVENLABS_API_KEY);
+  res.json({ hasServerKey });
+});
+
 // ─── GET /api/elevenlabs/voices ──────────────────────────────────
 router.get("/elevenlabs/voices", async (req: Request, res: Response) => {
   const apiKey = (req.headers["x-elevenlabs-key"] as string) || process.env.ELEVENLABS_API_KEY || "";
