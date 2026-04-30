@@ -217,7 +217,14 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     // PREFER_TRANSPARENT_WEBM below to false. That single switch flips both the
     // Azure request body (avatarService.ts) and the FFmpeg overlay strategy
     // (ffmpegService.ts useGreenScreen branch).
-    const PREFER_TRANSPARENT_WEBM = true;
+    // Set to false: Azure's avatar batch synthesis API (api-version
+    // 2024-04-15-preview) does NOT honour backgroundColor:"transparent".
+    // It accepts videoFormat:"webm" + videoCodec:"vp9" but silently
+    // substitutes a WHITE background (verified Apr 30 2026: ffprobe shows
+    // pix_fmt=yuv420p with no alpha plane; corner pixels = #FFFFFF).
+    // The legacy mp4 + green-screen + chroma key path is the working route.
+    // See replit.md → "Known Azure Limitations" for the full investigation.
+    const PREFER_TRANSPARENT_WEBM = false;
     const wantsAlphaCompositing = realism && !bgImageUrl;
     const useTransparent = PREFER_TRANSPARENT_WEBM && wantsAlphaCompositing;
     const useGreenScreen = !PREFER_TRANSPARENT_WEBM && wantsAlphaCompositing;

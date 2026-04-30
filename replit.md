@@ -48,9 +48,9 @@ artifacts/
 | Feature | Details |
 |---|---|
 | **AI Script Generation** | Azure OpenAI (gpt-4o-mini), 5 styles: Viral Hook, Listicle, Story, Educational, Sales. Natural spoken-language prompts forbid bullet lists, require contractions and filler transitions. |
-| **Realism Mode** (default ON) | **Transparent WebM avatar** (alpha-channel overlay, no chroma key), color grade (`eq`), film grain (`noise`), Ken Burns bg zoom, broadcast audio (loudnorm + echo), opening hook text overlay |
-| **Avatar Synthesis** | Azure AI Avatar Batch Synthesis API (PUT + poll, api-version `2024-04-15-preview`). Always uses SSML with prosody rate/pitch, sentence boundary silence, breathing breaks. **Realism mode (no bg image) → `videoFormat:"webm"` + `videoCodec:"vp9"` + `backgroundColor:"transparent"`** so the avatar arrives with a real alpha channel. Falls back to mp4/h264 + `#00FF00FF` green screen when `useTransparent=false` (legacy chroma path retained but currently disabled in `routes/generate.ts`). When `bgImageUrl` is set, transparent mode is skipped and Azure composites the bg server-side. |
-| **Transparent Overlay** | `[av]format=yuva420p,scale,…overlay=…:format=auto` — alpha respected natively. No `chromakey`, no `despill`, no green halo. The legacy `chromakey=color=0x00ff00:similarity=0.30:blend=0.10` + `despill=type=green:mix=0.5` branch is still in `ffmpegService.ts` as a fallback while the transparent path is being validated end-to-end. |
+| **Realism Mode** (default ON) | Green-screen mp4 avatar + chroma key compositing, color grade (`eq`), film grain (`noise`), Ken Burns bg zoom, broadcast audio (loudnorm + echo), opening hook text overlay. (Transparent WebM was tested Apr 30 2026 — Azure returns opaque white background; see Known Azure Limitations.) |
+| **Avatar Synthesis** | Azure AI Avatar Batch Synthesis API (PUT + poll, api-version `2024-04-15-preview`). Always uses SSML with prosody rate/pitch, sentence boundary silence, breathing breaks. **Realism mode + no bgImageUrl** → mp4/h264 + green screen `#00FF00FF` (chroma keyed in post). **bgImageUrl set** → mp4/h264, Azure composites the background server-side. Transparent webm/vp9 path is wired but disabled (`PREFER_TRANSPARENT_WEBM = false`) — see Known Azure Limitations. |
+| **Chroma Key Compositing** | `chromakey=color=0x00ff00:similarity=0.30:blend=0.10` + `despill=type=green:mix=0.5:expand=0` — avatar edges blend into scene with green spill removal. |
 | **Voice Pacing** | 3-level Pacing slider: Slow (0.88×), Natural (0.95×), Fast (1.05×). Maps to SSML `<prosody rate>`. |
 | **Voice Preview** | `POST /api/preview-voice` (Azure) or `POST /api/elevenlabs/preview` (ElevenLabs) — 5s TTS sample returned as MP3 |
 | **ElevenLabs Voices** | Optional: user enters their ElevenLabs API key in Voice Browser → stored in localStorage. Voices fetched from ElevenLabs API, prefixed `el:voiceId` in state. Full 643-voice Azure browser + ElevenLabs library in a tabbed modal. |
@@ -84,7 +84,7 @@ artifacts/
 
 1. Background source, oversized 3% (`gradients` or `color`)
 2. Ken Burns crop pan on background
-3. Avatar compositing — **transparent WebM path**: `format=yuva420p` → `scale` → `overlay …:format=auto` (alpha respected). Legacy fallback: `chromakey` → `despill` → `scale` → `overlay`.
+3. Avatar compositing — **active path**: `chromakey=0x00ff00:similarity=0.30:blend=0.10` → `despill=type=green:mix=0.5` → `scale` → `overlay`. Transparent-WebM branch (`format=yuva420p` → `scale` → `overlay …:format=auto`) exists in code for future Azure API versions but is currently disabled — see Known Azure Limitations.
 4. Color grade (`eq`) + sharpen (`unsharp`) + vignette
 5. Lower-third dark overlay (2-layer `drawbox`)
 6. Brand accent line (`drawbox`)
@@ -108,38 +108,63 @@ artifacts/
 - Method: PUT to create, GET to poll
 - Body is **flat** (no `payload` wrapper).
 - `inputKind: "SSML"` is the only mode used. Azure removed `PreSynthesizedAudio` support from the avatar batch synthesis API in 2025 (returns `400 BadRequest: $.inputKind invalid + payload required`). To use ElevenLabs voices, generate the avatar with Azure TTS here, then swap the audio track in `ffmpegService.ts` via `elAudioPath`.
-- **Background modes**:
-  - `realism=true` + no `bgImageUrl` → `videoFormat:"webm"`, `videoCodec:"vp9"`, `backgroundColor:"transparent"` (transparent WebM with alpha channel)
+- **Background modes** (current production routing — see `PREFER_TRANSPARENT_WEBM` in `routes/generate.ts`):
+  - `realism=true` + no `bgImageUrl` → mp4/h264 + `backgroundColor:"#00FF00FF"` (green screen, chroma keyed in post)
   - `bgImageUrl` set → mp4/h264, Azure composites the background image server-side
-  - Legacy chroma path (mp4/h264 + `#00FF00FF`) is still wired in `avatarService.ts` and `ffmpegService.ts` — flip `useTransparent=false` in `routes/generate.ts` to fall back
+  - Transparent webm/vp9 path is implemented in `avatarService.ts` (`useTransparent` flag) but disabled because Azure ignores `backgroundColor:"transparent"` — see Known Azure Limitations below
 - Poll interval: 6s, max wait: 25min
 
-### Transparent WebM — Verification Status
+### Known Azure Limitations
 
-Status: **wired and code-reviewed; pending end-to-end visual confirmation on next user-triggered render.**
+#### Avatar batch synthesis ignores `backgroundColor:"transparent"` (verified Apr 30 2026)
 
-The first render after this change has not yet happened — the latest file in `outputs/` is `avatar_raw.mp4` from before the switch. After the next generation completes, run this verification recipe:
+**Test setup**: Submitted a real avatar synthesis job with
+`videoFormat:"webm"`, `videoCodec:"vp9"`, `backgroundColor:"transparent"`
+against `https://{region}.api.cognitive.microsoft.com/avatar/batchsyntheses/{jobId}?api-version=2024-04-15-preview`.
+
+**Result**: Job succeeded. Downloaded `avatar_raw.webm` (26 MB).
+
+```text
+ffprobe -v error -show_streams avatar_raw.webm
+  → codec_name=vp9        ✓ codec request honoured
+  → codec_name=opus       ✓ audio
+  → pix_fmt=yuv420p       ✗ NO alpha plane (would be yuva420p)
+
+Corner pixel sample (all four corners): #FFFFFF (pure white)
+```
+
+**Conclusion**: Azure honours the container/codec parts of the request but
+silently substitutes **white** for `backgroundColor:"transparent"`. The
+returned WebM is fully opaque — overlaying it with `format=yuva420p` +
+`overlay=…:format=auto` produces a visible white rectangle on top of the
+cinematic background.
+
+**Resolution**: `PREFER_TRANSPARENT_WEBM = false` in `routes/generate.ts`.
+The legacy mp4 + green-screen (`#00FF00FF`) + chroma key path is the only
+working option for compositing the avatar onto a custom background.
+
+**Code state after revert**:
+- `routes/generate.ts` line 230: `const PREFER_TRANSPARENT_WEBM = false;`
+- `avatarService.ts`: still supports the `useTransparent` flag — flips the
+  request body to webm/vp9/transparent — but generate.ts no longer sets it.
+  Kept in code so future Azure API revisions can be re-tested by flipping
+  the single constant back to `true`.
+- `ffmpegService.ts`: chroma path verified intact —
+  `chromakey=color=0x00ff00:similarity=0.30:blend=0.10` +
+  `despill=type=green:mix=0.5:expand=0`. Transparent overlay branch
+  (`useTransparentAvatar`) also kept for the same future-test reason.
+
+**Re-test recipe**: If a future Azure API version (e.g. `2025-…`) is
+released, change the api-version string in `avatarService.ts`, flip
+`PREFER_TRANSPARENT_WEBM = true`, generate one video, then run:
 
 ```bash
 ffprobe -v error -show_streams artifacts/api-server/outputs/avatar_raw.webm \
   | grep -E "^(codec_name|pix_fmt)="
 ```
 
-Expected output:
-```
-codec_name=vp9
-pix_fmt=yuva420p
-```
-
-- `pix_fmt=yuva420p` (the trailing `a` is the alpha plane) → Azure honoured the transparent request → the `useTransparentAvatar` overlay branch in `ffmpegService.ts` will get clean alpha edges.
-- `pix_fmt=yuv420p` (no `a`) → Azure ignored the transparent request and produced an opaque WebM. Do NOT try to force it. Fall back to chroma key by flipping the single constant `PREFER_TRANSPARENT_WEBM = false` in `routes/generate.ts` — that automatically re-enables the green-screen mp4 + chroma path everywhere. Then document the failure here under a new "Known Azure Limitations" section.
-
-Visual quality check on the final composited mp4 — avatar edges (hair, shoulders) must have:
-- Zero green tint
-- Zero halo/fringe
-- Natural blend with no hard cutout edge
-
-If edges look worse than the previous green-screen output, revert via the procedure above.
+Confirmed-working signature is `codec_name=vp9` + `pix_fmt=yuva420p`. Anything
+else → flip back to false, document the new failure below this entry.
 
 ### Environment Secrets Required
 
