@@ -615,7 +615,10 @@ export async function postProcessAvatarVideo(
       "-map [aout]",
       `-t ${duration}`,
       "-c:v libx264",
-      "-preset medium",
+      // `preset fast` keeps render time reasonable (~30–60s for a 45s clip).
+      // The CRF=18 improvement is what actually drives the quality boost — preset
+      // mostly controls file size at a given quality. `medium` made renders feel broken.
+      "-preset fast",
       "-crf 18",
       "-profile:v high",
       "-level 4.1",
