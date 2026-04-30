@@ -38,6 +38,26 @@ export function VideoLibrary({ library, addVideo, removeVideo, setPage }: Props)
   useEffect(() => { libraryRef.current = library; }, [library]);
   useEffect(() => { addVideoRef.current = addVideo; }, [addVideo]);
 
+  // Tombstone list — IDs the user has explicitly deleted. Auto-recovery skips
+  // these so deleting a video stays deleted even if the file is still on the
+  // server. Stored in localStorage as a JSON array.
+  const TOMBSTONE_KEY = "lm.deletedVideoIds";
+  function readTombstones(): Set<string> {
+    try {
+      const raw = localStorage.getItem(TOMBSTONE_KEY);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw) as unknown;
+      return Array.isArray(parsed) ? new Set(parsed.filter((x): x is string => typeof x === "string")) : new Set();
+    } catch {
+      return new Set();
+    }
+  }
+  function addTombstone(id: string) {
+    const t = readTombstones();
+    t.add(id);
+    try { localStorage.setItem(TOMBSTONE_KEY, JSON.stringify([...t])); } catch { /* quota / private mode — best effort */ }
+  }
+
   // Auto-recover any server-side videos that aren't in the local library yet.
   // This catches the case where the user navigated away from CreateVideo while
   // a generation was in progress, so the polling never finished writing the
@@ -55,7 +75,8 @@ export function VideoLibrary({ library, addVideo, removeVideo, setPage }: Props)
         }[];
         if (cancelled) return;
         const existingIds = new Set(libraryRef.current.map((v) => v.id));
-        const toAdd = serverVideos.filter((v) => !existingIds.has(v.videoId));
+        const tombstones = readTombstones();
+        const toAdd = serverVideos.filter((v) => !existingIds.has(v.videoId) && !tombstones.has(v.videoId));
         if (toAdd.length === 0) return;
         toAdd.forEach((v) => addVideoRef.current({
           id: v.videoId,
@@ -90,7 +111,8 @@ export function VideoLibrary({ library, addVideo, removeVideo, setPage }: Props)
         thumbnailUrl: string | null; createdAt: string; sizeBytes: number;
       }[];
       const existingIds = new Set(library.map((v) => v.id));
-      const toAdd = serverVideos.filter((v) => !existingIds.has(v.videoId));
+      const tombstones = readTombstones();
+      const toAdd = serverVideos.filter((v) => !existingIds.has(v.videoId) && !tombstones.has(v.videoId));
       if (toAdd.length === 0) {
         setRecoverMsg("No new videos found to recover.");
       } else {
@@ -127,6 +149,7 @@ export function VideoLibrary({ library, addVideo, removeVideo, setPage }: Props)
   function handleDelete(id: string) {
     if (confirmDelete === id) {
       if (playingVideo?.id === id) setPlayingVideo(null);
+      addTombstone(id);
       removeVideo(id);
       setConfirmDelete(null);
     } else {
