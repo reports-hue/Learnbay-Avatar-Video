@@ -1,0 +1,311 @@
+/**
+ * B-roll insertion engine (T203).
+ *
+ * Bridges the LLM segmenter (T202) and the Pexels stock-video client (T201)
+ * into ffmpeg filter-graph fragments that overlay the avatar render.
+ *
+ * Two visual modes are supported:
+ *   - "broll-pip"        — rounded-corner inset in the upper-left safe zone
+ *                           (320×320 vertical, 360×360 landscape, R=28)
+ *   - "broll-fullscreen" — full-frame overlay with crossfade in/out via alpha
+ *
+ * "stat-popin" is handled by the existing T103 numeric-callout renderer;
+ * this engine ignores it. "none" segments never reach this engine because
+ * `enforceBudget()` in scriptSegmenter drops them.
+ *
+ * HARD INVARIANTS:
+ *   - Every B-roll input is consumed via `[N:v]` only — its audio track
+ *     never enters the graph. (Pexels clips often have ambient audio that
+ *     would clash with the avatar VO.)
+ *   - All commas inside FFmpeg expressions are escaped as `\,` per the same
+ *     gotcha that bit T102/T104/T106 (filtergraph parser treats unescaped
+ *     commas as filter separators, even inside single-quoted exprs).
+ *   - Failures are SOFT — `fetchBrollResources` returns `asset: null` for
+ *     any segment whose Pexels lookup failed, and the caller composes the
+ *     filter graph only for segments that have a usable asset.
+ *   - License audit trail is written to `<outputsDir>/<jobId>.assets.json`
+ *     after each render so we can prove which clips were used.
+ */
+
+import path from "node:path";
+import { promises as fs } from "node:fs";
+import { searchVideo, type PexelsAsset } from "./pexelsService.js";
+import type { Segment } from "./scriptSegmenter.js";
+import { logger } from "../lib/logger.js";
+
+// ─────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────
+
+export interface BrollResource {
+  segment: Segment;
+  /** null when Pexels lookup failed or mode doesn't need a video. */
+  asset: PexelsAsset | null;
+}
+
+export interface FetchBrollOptions {
+  segments: Segment[];
+  isVertical: boolean;
+  /** Where Pexels caches MP4s. Pass through from outputsDir/cache/pexels. */
+  cacheDir: string;
+}
+
+// ─────────────────────────────────────────────
+// Pexels fetch orchestrator
+// ─────────────────────────────────────────────
+
+/**
+ * For each B-roll segment in the plan, look up a Pexels clip whose duration
+ * covers the segment. Stat-popin segments are passed through unchanged
+ * (asset=null) so callers know they exist but should be handed off to T103.
+ *
+ * Sequential calls (not Promise.all): Pexels rate-limits at 200 req/hr, and
+ * any single render rarely needs more than 6-8 lookups, so the modest
+ * latency cost (≤ 2-3 s for an uncached batch) is worth the predictable
+ * load on the API.
+ */
+export async function fetchBrollResources(
+  opts: FetchBrollOptions
+): Promise<BrollResource[]> {
+  const { segments, isVertical, cacheDir } = opts;
+  const orientation = isVertical ? "portrait" : "landscape";
+  const out: BrollResource[] = [];
+
+  for (const seg of segments) {
+    if (seg.mode !== "broll-pip" && seg.mode !== "broll-fullscreen") {
+      out.push({ segment: seg, asset: null });
+      continue;
+    }
+    if (!seg.concept || !seg.concept.trim()) {
+      out.push({ segment: seg, asset: null });
+      continue;
+    }
+    const segDur = seg.endSec - seg.startSec;
+    // Need a clip at least segment-long (with 0.5s safety floor for fade).
+    // Floor of 2s prevents asking Pexels for absurdly short clips.
+    const minDur = Math.max(2, Math.ceil(segDur + 0.5));
+    const asset = await searchVideo({
+      query: seg.concept,
+      orientation,
+      minDurationSec: minDur,
+      cacheDir,
+    });
+    if (!asset) {
+      logger.warn(
+        {
+          mode: seg.mode,
+          startSec: seg.startSec,
+          endSec: seg.endSec,
+          conceptHead: seg.concept.slice(0, 60),
+        },
+        "B-roll lookup returned no asset; segment will be skipped"
+      );
+    }
+    out.push({ segment: seg, asset });
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────
+// Audit trail
+// ─────────────────────────────────────────────
+
+/**
+ * Write a JSON audit log of every B-roll asset used in this render, plus
+ * its Pexels attribution. Required for license compliance even though
+ * Pexels doesn't strictly require attribution — auditable proof of
+ * provenance protects us if a clip is later disputed.
+ *
+ * Always overwrites. Returns the file path on success, null on error.
+ */
+export async function writeBrollAuditTrail(
+  jobId: string,
+  outputsDir: string,
+  resources: BrollResource[]
+): Promise<string | null> {
+  const auditPath = path.join(outputsDir, `${jobId}.assets.json`);
+  try {
+    const entries = resources
+      .filter((r) => r.asset !== null)
+      .map((r) => ({
+        startSec: r.segment.startSec,
+        endSec: r.segment.endSec,
+        mode: r.segment.mode,
+        concept: r.segment.concept,
+        pexelsId: r.asset!.pexelsId,
+        attribution: r.asset!.attribution,
+        width: r.asset!.width,
+        height: r.asset!.height,
+        durationSec: r.asset!.durationSec,
+        cacheKey: r.asset!.cacheKey,
+        cachedFilePath: r.asset!.filePath,
+      }));
+    const skipped = resources
+      .filter((r) => r.asset === null && (r.segment.mode === "broll-pip" || r.segment.mode === "broll-fullscreen"))
+      .map((r) => ({
+        startSec: r.segment.startSec,
+        endSec: r.segment.endSec,
+        mode: r.segment.mode,
+        concept: r.segment.concept,
+        reason: "no-pexels-match",
+      }));
+    await fs.writeFile(
+      auditPath,
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          jobId,
+          totalSegments: resources.length,
+          assetsUsed: entries.length,
+          assetsSkipped: skipped.length,
+          assets: entries,
+          skipped,
+        },
+        null,
+        2
+      )
+    );
+    return auditPath;
+  } catch (err) {
+    logger.warn(
+      { err: (err as Error).message?.slice(0, 200) },
+      "B-roll audit write failed"
+    );
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────
+// Filter graph builders
+// ─────────────────────────────────────────────
+
+export interface BrollPipFilterOptions {
+  /** Input index of the b-roll video in the ffmpeg cmd. */
+  brollInputIdx: number;
+  startSec: number;
+  endSec: number;
+  outW: number;
+  outH: number;
+  isVertical: boolean;
+  inputLabel: string; // base video label, e.g. "with_lt"
+  outputLabel: string; // next label for the chain
+  /** Globally unique tag for intermediate labels (avoids collisions). */
+  uniqueTag: string;
+}
+
+/**
+ * Build a B-roll PiP overlay filter chain — rounded-corner inset in the
+ * upper-LEFT safe zone (so it never collides with the top-right logo pill
+ * or the bottom captions / outro card / lower-third strip).
+ *
+ * Produces 3 filters:
+ *   1. `[N:v]setpts=...,scale,crop,format=rgba` — square crop, RGBA so geq
+ *       can author the alpha channel
+ *   2. `[..]geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='<rounded-rect formula>'`
+ *       — pixel-shader-style rounded mask; corner radius 28 px
+ *   3. `[base][round]overlay=X:Y:format=auto:enable='between(t,start,end)'`
+ *       — only visible during the segment window
+ *
+ * setpts shifts the b-roll's PTS so its t=0 lands at output t=startSec —
+ * meaning the viewer sees the FIRST frame of the clip when the inset
+ * appears, not a mid-clip frame. (Without this shift, the b-roll plays
+ * concurrent with the base video and the viewer would join mid-clip.)
+ */
+export function buildBrollPipFilter(opts: BrollPipFilterOptions): string[] {
+  const {
+    brollInputIdx,
+    startSec,
+    endSec,
+    outW,
+    outH,
+    isVertical,
+    inputLabel,
+    outputLabel,
+    uniqueTag,
+  } = opts;
+  const pipSize = isVertical ? 320 : 360;
+  const radius = 28;
+  // Position safely inside frame, leaving margin for logo (top-right) and
+  // captions (bottom-center). Upper-left works for both orientations.
+  const margin = isVertical ? Math.round(outW * 0.04) : Math.round(outW * 0.025);
+  const xPos = margin;
+  const yPos = margin + Math.round(outH * 0.10); // below logo line
+
+  // Rounded-rectangle alpha formula for a W×H box, corner radius R:
+  //   dx = min(X, W-X)                   (distance to nearest vertical edge)
+  //   dy = min(Y, H-Y)                   (distance to nearest horizontal edge)
+  //   inside = (dx >= R) || (dy >= R)
+  //          || (hypot(R-dx, R-dy) <= R) (corner check)
+  // We use `+` between gte/lte calls as logical-OR — any non-zero sum → true.
+  // ALL commas inside the expression are escaped as \\, for the filtergraph
+  // parser (FFmpeg treats unescaped commas as filter separators even inside
+  // single quotes).
+  const alphaExpr =
+    `if(` +
+    `gte(min(X\\,W-X)\\,${radius})` +
+    `+gte(min(Y\\,H-Y)\\,${radius})` +
+    `+lte(hypot(${radius}-min(X\\,W-X)\\,${radius}-min(Y\\,H-Y))\\,${radius})` +
+    `\\,255\\,0)`;
+
+  const sIn = `pip_in_${uniqueTag}`;
+  const sRound = `pip_round_${uniqueTag}`;
+  const enableExpr = `'between(t\\,${startSec.toFixed(3)}\\,${endSec.toFixed(3)})'`;
+
+  return [
+    `[${brollInputIdx}:v]setpts=PTS-STARTPTS+${startSec.toFixed(3)}/TB,scale=${pipSize}:${pipSize}:force_original_aspect_ratio=increase,crop=${pipSize}:${pipSize},setsar=1,format=rgba[${sIn}]`,
+    `[${sIn}]geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)':a='${alphaExpr}'[${sRound}]`,
+    `[${inputLabel}][${sRound}]overlay=${xPos}:${yPos}:format=auto:enable=${enableExpr}[${outputLabel}]`,
+  ];
+}
+
+export interface BrollFullscreenFilterOptions {
+  brollInputIdx: number;
+  startSec: number;
+  endSec: number;
+  outW: number;
+  outH: number;
+  inputLabel: string;
+  outputLabel: string;
+  uniqueTag: string;
+  /** Crossfade duration on each side (default 0.3s). Capped at half segment. */
+  fadeDur?: number;
+}
+
+/**
+ * Build a full-screen B-roll overlay with crossfade in/out via alpha.
+ * Avatar continues to "exist" beneath, but is fully covered for the segment
+ * window. Captions/logo/CTA still render on TOP of the b-roll because they
+ * come later in the filter chain.
+ *
+ * Produces 3 filters:
+ *   1. setpts shift + cover-scale + crop + format=yuva420p
+ *   2. fade=in (alpha) at startSec for fadeDur, fade=out (alpha) at endSec-fadeDur
+ *   3. overlay with enable= window
+ */
+export function buildBrollFullscreenFilter(
+  opts: BrollFullscreenFilterOptions
+): string[] {
+  const {
+    brollInputIdx,
+    startSec,
+    endSec,
+    outW,
+    outH,
+    inputLabel,
+    outputLabel,
+    uniqueTag,
+  } = opts;
+  const segLen = endSec - startSec;
+  const fadeDur = Math.min(opts.fadeDur ?? 0.3, segLen / 2);
+  const fadeOutSt = endSec - fadeDur;
+  const sIn = `bf_in_${uniqueTag}`;
+  const sFaded = `bf_fade_${uniqueTag}`;
+
+  const enableExpr = `'between(t\\,${startSec.toFixed(3)}\\,${endSec.toFixed(3)})'`;
+
+  return [
+    `[${brollInputIdx}:v]setpts=PTS-STARTPTS+${startSec.toFixed(3)}/TB,scale=${outW}:${outH}:force_original_aspect_ratio=increase,crop=${outW}:${outH},setsar=1,format=yuva420p[${sIn}]`,
+    `[${sIn}]fade=t=in:st=${startSec.toFixed(3)}:d=${fadeDur.toFixed(3)}:alpha=1,fade=t=out:st=${fadeOutSt.toFixed(3)}:d=${fadeDur.toFixed(3)}:alpha=1[${sFaded}]`,
+    `[${inputLabel}][${sFaded}]overlay=0:0:format=auto:enable=${enableExpr}[${outputLabel}]`,
+  ];
+}

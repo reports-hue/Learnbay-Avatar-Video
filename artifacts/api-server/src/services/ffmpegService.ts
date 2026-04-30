@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import { existsSync } from "fs";
 import { createWriteStream } from "fs";
 import fs from "fs/promises";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { logger } from "../lib/logger.js";
 import type { WordTiming } from "./speech.js";
 import {
@@ -24,8 +24,80 @@ import {
   buildCornerLogoFadeIn,
   brandColorToFfmpeg,
 } from "./introStingService.js";
+import {
+  buildBrollPipFilter,
+  buildBrollFullscreenFilter,
+  type BrollResource,
+} from "./brollEngine.js";
 
-if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
+/**
+ * Select an ffmpeg binary that supports the full filter set we need.
+ *
+ * The bundled `ffmpeg-static` package on Node 5.3.0 ships johnvansickle's
+ * static 7.0.2 build, which omits `drawtext` (and a handful of other
+ * libfreetype-backed filters). Our pipeline depends on `drawtext` for
+ * ambient particles (T101), the swoosh sting (T104), and elsewhere — so
+ * if we silently use `ffmpeg-static` everywhere, those filters fail with
+ * `No such filter: 'drawtext'` and the entire post-process render dies.
+ *
+ * Strategy: probe each candidate binary's `-filters` output for a
+ * `drawtext` line. Pick the first that has it. Fall back to `ffmpeg-static`
+ * (so non-drawtext renders keep working) if no candidate qualifies, but
+ * log a loud warning so the deployment surfaces the issue.
+ *
+ * Probe order:
+ *  1. `FFMPEG_PATH` env override (operator escape hatch)
+ *  2. `ffmpeg` from PATH (typically the system / Nix-provided full build)
+ *  3. `ffmpeg-static` (last resort)
+ */
+function binaryHasDrawtext(bin: string): boolean {
+  try {
+    const r = spawnSync(bin, ["-hide_banner", "-filters"], {
+      encoding: "utf-8",
+      timeout: 4000,
+    });
+    if (r.status !== 0 || !r.stdout) return false;
+    return /^\s*[A-Z.]{3,5}\s+drawtext\s/m.test(r.stdout);
+  } catch {
+    return false;
+  }
+}
+
+const ffmpegCandidates: string[] = [
+  process.env.FFMPEG_PATH ?? "",
+  "ffmpeg",
+  ffmpegPath ?? "",
+].filter(Boolean);
+
+let selectedFfmpeg: string | null = null;
+for (const c of ffmpegCandidates) {
+  if (binaryHasDrawtext(c)) {
+    selectedFfmpeg = c;
+    break;
+  }
+}
+
+if (selectedFfmpeg) {
+  ffmpeg.setFfmpegPath(selectedFfmpeg);
+  logger.info(
+    { binary: selectedFfmpeg },
+    "[ffmpeg] selected binary with drawtext support"
+  );
+} else if (ffmpegPath) {
+  ffmpeg.setFfmpegPath(ffmpegPath);
+  logger.warn(
+    { binary: ffmpegPath },
+    "[ffmpeg] no binary with drawtext support found — particles, swoosh, and other text-based overlays will fail. Set FFMPEG_PATH to a full FFmpeg build to fix."
+  );
+}
+
+/**
+ * Resolved ffmpeg binary path used by all out-of-band `spawn(...)` calls
+ * in this module (loudness measurement, leak asset prep, beat detection,
+ * Pexels caching, etc.). Falls back to plain `ffmpeg` (PATH lookup) if
+ * neither probe nor the static package returned a path.
+ */
+const resolvedFfmpegBin: string = selectedFfmpeg ?? ffmpegPath ?? "ffmpeg";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const assetsDir = path.resolve(__dirname, "../assets");
@@ -81,7 +153,7 @@ async function measureLoudness(
   target: LoudnessTarget
 ): Promise<LoudnessMeasurement | null> {
   return new Promise((resolve) => {
-    const bin = ffmpegPath || "ffmpeg";
+    const bin = resolvedFfmpegBin;
     const args = [
       "-hide_banner",
       "-nostats",
@@ -631,6 +703,15 @@ export interface PostProcessOptions {
   realism?: boolean;        // default true — enables grain, Ken Burns, enhanced audio
   script?: string;          // used for opening hook text
   elAudioPath?: string;     // local path to ElevenLabs MP3 — when set, replaces the avatar's Azure TTS audio
+  /**
+   * B-roll insertions (T203). Each resource pairs an LLM-segmented time
+   * window (broll-pip or broll-fullscreen) with a Pexels stock-video asset.
+   * Resources with `asset === null` are silently skipped (lookup failed).
+   * Stat-popin segments are ignored here — the T103 numeric-callout
+   * renderer handles those. Audio from b-roll is always muted (consumed
+   * via `[N:v]` only).
+   */
+  brollResources?: BrollResource[];
 }
 
 export async function postProcessAvatarVideo(
@@ -848,6 +929,33 @@ export async function postProcessAvatarVideo(
   const bgImagePath = options.bgImagePath && existsSync(options.bgImagePath) ? options.bgImagePath : null;
   const elAudioPath = options.elAudioPath && existsSync(options.elAudioPath) ? options.elAudioPath : null;
 
+  // ── B-roll pre-pass (T203) ──
+  // Keep only resources whose Pexels lookup succeeded AND whose mode renders
+  // a video overlay (broll-pip or broll-fullscreen). Stat-popin segments are
+  // handed off to T103's numeric-callout renderer, not this engine.
+  // Each kept resource earns one ffmpeg input slot (inputIdx wired below).
+  const renderableBroll = (options.brollResources ?? []).filter(
+    (r) =>
+      r.asset !== null &&
+      existsSync(r.asset.filePath) &&
+      (r.segment.mode === "broll-pip" || r.segment.mode === "broll-fullscreen")
+  );
+  if (renderableBroll.length > 0) {
+    logger.info(
+      {
+        count: renderableBroll.length,
+        sample: renderableBroll.slice(0, 4).map((r) => ({
+          mode: r.segment.mode,
+          startSec: r.segment.startSec,
+          endSec: r.segment.endSec,
+          conceptHead: (r.segment.concept ?? "").slice(0, 40),
+          pexelsId: r.asset!.pexelsId,
+        })),
+      },
+      "B-roll segments scheduled for render"
+    );
+  }
+
   logger.info(
     {
       platform: options.platform,
@@ -932,6 +1040,17 @@ export async function postProcessAvatarVideo(
         cmd = cmd.input(assetPath);
         leakInputIndices.push(inputIndex++);
       }
+    }
+
+    // B-roll inputs (T203): one input per renderable resource. We use
+    // `-an` on each input so ffmpeg never demuxes the stock-clip's audio
+    // track (Pexels videos often have ambient/music audio that would
+    // otherwise need to be filtered out — `-an` is the cleanest enforcement
+    // of the "audio always muted" invariant).
+    const brollInputIndices: number[] = [];
+    for (const r of renderableBroll) {
+      cmd = cmd.input(r.asset!.filePath).inputOptions(["-an"]);
+      brollInputIndices.push(inputIndex++);
     }
 
     // Intro sting inputs (T104): when active, add two `color` inputs —
@@ -1147,6 +1266,66 @@ export async function postProcessAvatarVideo(
     const lt = lowerH;
     fp.push(`[${lastV}]drawbox=x=0:y=ih-${lt}:w=iw:h=${lt}:c=black@0.28:t=fill[with_lt]`);
     lastV = "with_lt";
+
+    // ── 6. B-roll insertions (T203) ──
+    // Each renderable resource produces a 3-filter chain that overlays
+    // the cached Pexels clip onto the current scene during the segment
+    // window. The base label is whatever lastV is right now (post lower-
+    // third strip), and each chain feeds its output back into lastV so
+    // multiple b-roll segments cascade naturally.
+    //
+    // Layering choice: B-roll sits ABOVE the lower-third drawbox + grade
+    // (so PiP + fullscreen content reads cleanly without our color grade
+    // re-shifting Pexels' already-graded footage), but BELOW the logo,
+    // hook, captions, callouts, CTA, and outro card (so all branding /
+    // text overlays remain visible during cutaways).
+    //
+    // Position: PiP always upper-left so it never collides with the top-
+    // right logo pill or the bottom captions / outro card.
+    //
+    // Empty resource list → this block emits nothing → graph behavior
+    // unchanged.
+    for (let i = 0; i < renderableBroll.length; i++) {
+      const r = renderableBroll[i];
+      const inputIdx = brollInputIndices[i];
+      const seg = r.segment;
+      // Defensive clamp: never let the segment exceed the actual video
+      // duration. enforceBudget already does this, but a second guard
+      // here protects against any future caller skipping that step.
+      const startSec = Math.max(0, Math.min(seg.startSec, duration));
+      const endSec = Math.max(startSec + 0.1, Math.min(seg.endSec, duration));
+      const outLabel = `with_broll_${i}`;
+      if (seg.mode === "broll-pip") {
+        fp.push(
+          ...buildBrollPipFilter({
+            brollInputIdx: inputIdx,
+            startSec,
+            endSec,
+            outW,
+            outH,
+            isVertical,
+            inputLabel: lastV,
+            outputLabel: outLabel,
+            uniqueTag: String(i),
+          })
+        );
+      } else {
+        // broll-fullscreen
+        fp.push(
+          ...buildBrollFullscreenFilter({
+            brollInputIdx: inputIdx,
+            startSec,
+            endSec,
+            outW,
+            outH,
+            inputLabel: lastV,
+            outputLabel: outLabel,
+            uniqueTag: String(i),
+          })
+        );
+      }
+      lastV = outLabel;
+    }
 
     // ── 7. Logo — top-right with dark glass pill background ──
     // Captured here so the T104 large-logo overlay (end-of-chain) can size

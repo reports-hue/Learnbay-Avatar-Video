@@ -11,6 +11,24 @@ import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle } from "../
 import { generateBackgroundImage } from "../services/imageGenerationService.js";
 import { getWordTimings } from "../services/speech.js";
 import { synthesizeElevenLabs } from "../services/elevenLabsService.js";
+import { segmentScript } from "../services/scriptSegmenter.js";
+import { fetchBrollResources, writeBrollAuditTrail } from "../services/brollEngine.js";
+import ffmpeg from "fluent-ffmpeg";
+
+/**
+ * Probe a media file's duration in seconds. Returns 0 on any error so
+ * the caller can short-circuit b-roll planning instead of crashing the
+ * render. This is intentionally lenient — duration is only used as a
+ * budget hint for the segmenter, not a hard correctness requirement.
+ */
+async function probeDurationSec(filePath: string): Promise<number> {
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) return resolve(0);
+      resolve(metadata.format.duration ?? 0);
+    });
+  });
+}
 
 const router: IRouter = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +39,10 @@ const PACING_SSML_RATE: Record<PacingRate, string> = {
   natural: "0.95",
   fast: "1.05",
 };
+
+// Mirror of ffmpegService's VERTICAL_PLATFORMS so the b-roll planner picks
+// the right Pexels orientation. Keep these two lists in sync.
+const VERTICAL_PLATFORMS = new Set(["YouTube Shorts", "Instagram Reels", "Facebook Reels"]);
 
 // ─── Job store ─────────────────────────────────────────────────────
 export interface JobResult {
@@ -247,6 +269,48 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     const avatarVideoPath = await generateAvatarVideo(avatarConfig);
     updateJob(jobId, { step: "avatar_done", percent: 75, message: "Avatar rendered! Applying cinematic effects…" });
 
+    // ── Step 3.5: Plan B-roll cutaways (T202 segmenter + T203 fetcher) ──
+    // Best-effort. Any failure here MUST NOT block the render — we just
+    // ship the video without b-roll. The segmenter and fetcher both
+    // return graceful empties on error, but we still wrap in try/catch
+    // for absolute safety.
+    let brollResources: import("../services/brollEngine.js").BrollResource[] = [];
+    if (wordTimings.length > 0) {
+      try {
+        const brollIsVertical = VERTICAL_PLATFORMS.has(platform);
+        const avatarDurationSec = await probeDurationSec(avatarVideoPath);
+        if (avatarDurationSec > 0) {
+          updateJob(jobId, { step: "broll_plan", percent: 78, message: "Planning b-roll cutaways…" });
+          const plan = await segmentScript({
+            script,
+            wordTimings,
+            style: scriptStyle,
+            platform,
+            duration: avatarDurationSec,
+          });
+          if (plan.segments.length > 0) {
+            updateJob(jobId, {
+              step: "broll_fetch",
+              percent: 80,
+              message: `Fetching ${plan.segments.length} b-roll clip(s)…`,
+            });
+            brollResources = await fetchBrollResources({
+              segments: plan.segments,
+              isVertical: brollIsVertical,
+              cacheDir: path.join(outputsDir, "cache", "pexels"),
+            });
+          }
+        }
+      } catch (brollErr) {
+        const m = (brollErr as { message?: string })?.message ?? String(brollErr);
+        logger.warn(
+          { jobId, message: m.slice(0, 200) },
+          "B-roll planning failed; continuing render without cutaways"
+        );
+        brollResources = [];
+      }
+    }
+
     // ── Step 4: Post-process ──
     const outputFilename = `video_${videoId}.mp4`;
     await postProcessAvatarVideo(avatarVideoPath, {
@@ -266,7 +330,13 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       realism,
       script,
       elAudioPath,
+      brollResources: brollResources.length > 0 ? brollResources : undefined,
     });
+
+    // Persist b-roll attribution audit trail (license compliance).
+    if (brollResources.length > 0) {
+      await writeBrollAuditTrail(videoId, outputsDir, brollResources);
+    }
 
     // ── Step 5: Thumbnail ──
     updateJob(jobId, { step: "thumbnail", percent: 95, message: "Generating thumbnail…" });
