@@ -9,6 +9,20 @@ import fs from "fs/promises";
 import { spawn } from "child_process";
 import { logger } from "../lib/logger.js";
 import type { WordTiming } from "./speech.js";
+import {
+  ensureLeakAssets,
+  findSentenceBoundaries,
+  buildLightLeakFilters,
+} from "./leakService.js";
+import { computeOutroState, generateOutroCardAss } from "./outroCardService.js";
+import {
+  computeIntroState,
+  buildLargeLogoFilters,
+  buildBlackoutFilter,
+  buildSwooshFilter,
+  buildCornerLogoFadeIn,
+  brandColorToFfmpeg,
+} from "./introStingService.js";
 
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -139,6 +153,106 @@ function formatAssTime(totalSec: number): string {
   const s = Math.floor(totalSec % 60);
   const cs = Math.floor((totalSec % 1) * 100);
   return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+}
+
+// Build an ambient drifting-bokeh particle layer that screen-blends with the
+// background BEFORE the avatar is overlaid (so particles never cover the face).
+// Pure FFmpeg, no external assets — uses drawtext bullets + gaussian blur, with
+// per-particle sin/cos drift driven by the `t` (time) variable.
+//
+// Why drawtext (not drawbox)? FFmpeg 6.1.x drawbox lacks `eval=frame`; drawtext
+// evaluates x/y per-frame natively. Why gbrp blend? Screen-blend in YUV
+// contaminates chroma (causes a purple cast on dark navy bgs); forcing both
+// inputs through `gbrp` keeps colors pure.
+//
+// Particle positions are placed in safe zones to avoid the avatar face area:
+//  • Landscape: top/bottom edges + left/right columns (face occupies center).
+//  • Vertical: top band + thin side columns (avatar fills bottom 88%).
+type ParticleSpec = {
+  nx: number; ny: number;        // normalized position 0-1
+  size: number;                  // font size in px (10-16)
+  opacity: number;               // 0-1
+  freqX: number; freqY: number;  // drift frequencies in rad/s
+  ampX: number; ampY: number;    // drift amplitudes in px
+};
+
+const LANDSCAPE_PARTICLES: ParticleSpec[] = [
+  // top edge (y ~ 0.10-0.18)
+  { nx: 0.06, ny: 0.13, size: 14, opacity: 0.9,  freqX: 0.50, freqY: 0.30, ampX: 30, ampY: 20 },
+  { nx: 0.24, ny: 0.10, size: 10, opacity: 0.7,  freqX: 0.40, freqY: 0.35, ampX: 25, ampY: 18 },
+  { nx: 0.43, ny: 0.16, size: 16, opacity: 0.85, freqX: 0.60, freqY: 0.45, ampX: 28, ampY: 22 },
+  { nx: 0.66, ny: 0.10, size: 12, opacity: 0.75, freqX: 0.50, freqY: 0.40, ampX: 32, ampY: 24 },
+  { nx: 0.85, ny: 0.16, size: 13, opacity: 0.80, freqX: 0.55, freqY: 0.50, ampX: 28, ampY: 20 },
+  // left column (x ~ 0.05-0.13)
+  { nx: 0.10, ny: 0.42, size: 11, opacity: 0.65, freqX: 0.45, freqY: 0.55, ampX: 30, ampY: 25 },
+  { nx: 0.06, ny: 0.62, size: 13, opacity: 0.70, freqX: 0.50, freqY: 0.40, ampX: 26, ampY: 22 },
+  // right column (x ~ 0.85-0.95)
+  { nx: 0.91, ny: 0.38, size: 12, opacity: 0.70, freqX: 0.50, freqY: 0.55, ampX: 28, ampY: 24 },
+  { nx: 0.88, ny: 0.58, size: 10, opacity: 0.65, freqX: 0.45, freqY: 0.40, ampX: 24, ampY: 22 },
+  // bottom edge (y ~ 0.85-0.95)
+  { nx: 0.10, ny: 0.86, size: 15, opacity: 0.80, freqX: 0.60, freqY: 0.40, ampX: 25, ampY: 18 },
+  { nx: 0.31, ny: 0.92, size: 11, opacity: 0.65, freqX: 0.50, freqY: 0.55, ampX: 28, ampY: 20 },
+  { nx: 0.50, ny: 0.88, size: 10, opacity: 0.70, freqX: 0.50, freqY: 0.60, ampX: 28, ampY: 22 },
+  { nx: 0.71, ny: 0.93, size: 12, opacity: 0.85, freqX: 0.45, freqY: 0.55, ampX: 30, ampY: 24 },
+  { nx: 0.89, ny: 0.85, size: 9,  opacity: 0.65, freqX: 0.55, freqY: 0.45, ampX: 24, ampY: 20 },
+];
+
+const VERTICAL_PARTICLES: ParticleSpec[] = [
+  // top band, broadly above the avatar (y ~ 0.04-0.18)
+  { nx: 0.08, ny: 0.06, size: 13, opacity: 0.85, freqX: 0.50, freqY: 0.35, ampX: 28, ampY: 20 },
+  { nx: 0.28, ny: 0.12, size: 11, opacity: 0.70, freqX: 0.40, freqY: 0.45, ampX: 26, ampY: 22 },
+  { nx: 0.46, ny: 0.05, size: 16, opacity: 0.85, freqX: 0.60, freqY: 0.40, ampX: 30, ampY: 24 },
+  { nx: 0.66, ny: 0.13, size: 12, opacity: 0.75, freqX: 0.50, freqY: 0.50, ampX: 28, ampY: 22 },
+  { nx: 0.85, ny: 0.07, size: 10, opacity: 0.65, freqX: 0.45, freqY: 0.40, ampX: 24, ampY: 20 },
+  { nx: 0.50, ny: 0.17, size: 14, opacity: 0.80, freqX: 0.55, freqY: 0.55, ampX: 28, ampY: 24 },
+  // left column (x ~ 0.04-0.12), in lower half but on the edge so not on face
+  { nx: 0.06, ny: 0.34, size: 12, opacity: 0.70, freqX: 0.45, freqY: 0.50, ampX: 22, ampY: 24 },
+  { nx: 0.08, ny: 0.58, size: 10, opacity: 0.65, freqX: 0.50, freqY: 0.40, ampX: 24, ampY: 22 },
+  { nx: 0.05, ny: 0.78, size: 13, opacity: 0.75, freqX: 0.55, freqY: 0.45, ampX: 22, ampY: 20 },
+  // right column (x ~ 0.88-0.96)
+  { nx: 0.93, ny: 0.32, size: 11, opacity: 0.70, freqX: 0.50, freqY: 0.50, ampX: 24, ampY: 22 },
+  { nx: 0.90, ny: 0.55, size: 13, opacity: 0.75, freqX: 0.45, freqY: 0.40, ampX: 26, ampY: 24 },
+  { nx: 0.95, ny: 0.80, size: 10, opacity: 0.65, freqX: 0.55, freqY: 0.55, ampX: 22, ampY: 20 },
+];
+
+function buildAmbientParticlesFilter(
+  durationSec: number,
+  outW: number,
+  outH: number,
+  isVertical: boolean,
+  inputLabel: string,
+  outputLabel: string,
+): string[] {
+  const specs = isVertical ? VERTICAL_PARTICLES : LANDSCAPE_PARTICLES;
+  // Deterministic per-particle phase offsets (so motion isn't synchronized).
+  // Hand-picked to spread phases evenly across [0, 2π).
+  const phases = [0.00, 0.83, 1.66, 2.49, 3.32, 4.15, 4.98, 0.41, 1.24, 2.07, 2.90, 3.73, 4.56, 5.39];
+
+  // Build a chained drawtext expression on top of a transparent-equivalent
+  // black source. We blur the result and screen-blend over the bg.
+  const drawtexts = specs.map((p, i) => {
+    const baseX = Math.round(p.nx * outW);
+    const baseY = Math.round(p.ny * outH);
+    const phX = phases[i % phases.length];
+    const phY = phases[(i + 7) % phases.length]; // offset Y phase from X phase
+    // FFmpeg expr inside a -filter_complex_script: escape commas with \, and colons inside [] not needed here
+    const xExpr = `${baseX}+${p.ampX}*sin(${p.freqX.toFixed(2)}*t+${phX.toFixed(2)})`;
+    const yExpr = `${baseY}+${p.ampY}*cos(${p.freqY.toFixed(2)}*t+${phY.toFixed(2)})`;
+    return `drawtext=text='\u25CF':fontcolor=white@${p.opacity.toFixed(2)}:fontsize=${p.size}:x='${xExpr}':y='${yExpr}'`;
+  });
+
+  // Sigma scales with frame area for consistent bokeh size at any aspect ratio.
+  // Empirically: sigma=10-12 looks great at 1080p; scale linearly with min(w,h).
+  const sigma = Math.max(8, Math.min(14, Math.round((Math.min(outW, outH) / 1080) * 11)));
+
+  return [
+    // Particle layer: black canvas + N drifting bullet glyphs + gaussian blur,
+    // forced into RGB so screen-blend doesn't shift chroma.
+    `color=c=black:s=${outW}x${outH}:r=30:d=${durationSec.toFixed(2)},${drawtexts.join(",")},gblur=sigma=${sigma},format=gbrp[parts]`,
+    // Force bg into RGB, screen-blend particles, convert back to YUV for downstream filters.
+    `[${inputLabel}]format=gbrp[bg_rgb]`,
+    `[bg_rgb][parts]blend=all_mode=screen:all_opacity=0.65,format=yuv420p[${outputLabel}]`,
+  ];
 }
 
 // Extract first sentence from script for hook text
@@ -329,6 +443,149 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 }
 
 // ─────────────────────────────────────────────
+// Numeric callouts — pop-in animated stat emphasis
+// ─────────────────────────────────────────────
+
+interface NumericCallout {
+  text: string;
+  startSec: number;
+  endSec: number;
+}
+
+// Detect spoken stats in word timings (percent / dollar / large number / multiplier
+// / number-with-suffix-word) so we can pop-in an animated emphasis at the exact
+// moment they're spoken. Curated to high-signal stat patterns only — generic
+// counts like "5 reasons" do NOT trigger.
+function findNumericCallouts(wordTimings: WordTiming[]): NumericCallout[] {
+  const out: NumericCallout[] = [];
+  if (wordTimings.length === 0) return out;
+
+  // Skip the first 2.5 s so callouts don't collide with the opening hook
+  // overlay; require ≥ 2.0 s gap between callouts to avoid visual noise.
+  const HOOK_LOCKOUT_SEC = 2.5;
+  const COOLDOWN_SEC = 2.0;
+  let lastEndSec = -Infinity;
+
+  // Strip surrounding sentence punctuation (quotes, parens, commas, periods,
+  // semicolons, etc.) at WORD BOUNDARIES only — internal `.` and `,` are kept
+  // so "2.5" and "50,000" survive intact.
+  const clean = (w: string) =>
+    w.replace(/^[\s"'`(\[\{]+|[\s"'`)\]\}.,;:!?]+$/g, "");
+
+  for (let i = 0; i < wordTimings.length; i++) {
+    const wt = wordTimings[i];
+    const startSec = wt.startSec;
+    if (startSec < HOOK_LOCKOUT_SEC) continue;
+    if (startSec - lastEndSec < COOLDOWN_SEC) continue;
+
+    const word = clean(wt.word);
+    if (!word) continue;
+
+    let matchedText: string | null = null;
+    let endIdx = i;
+
+    // Pattern A: percent — "15%" / "9.5%"
+    if (/^\d{1,3}(?:\.\d+)?%$/.test(word)) {
+      matchedText = word;
+    }
+    // Pattern B: dollar prefix — "$5" / "$2.5M" / "$1.2B"
+    else if (/^\$\d+(?:[.,]\d+)?[KMB]?$/i.test(word)) {
+      matchedText = word;
+    }
+    // Pattern C: comma-separated big number — "50,000" / "1,500,000"
+    else if (/^\d{1,3}(?:,\d{3})+$/.test(word)) {
+      matchedText = word;
+    }
+    // Pattern D: x-multiplier — "10x" / "3X"
+    else if (/^\d+(?:\.\d+)?x$/i.test(word)) {
+      matchedText = word;
+    }
+    // Pattern E: bare number followed by scale word — "5 million" / "2.5 billion"
+    else if (/^\d+(?:[.,]\d+)?$/.test(word) && i + 1 < wordTimings.length) {
+      const nextRaw = clean(wordTimings[i + 1].word).toLowerCase();
+      if (/^(thousand|million|billion|trillion|hundred)$/.test(nextRaw)) {
+        matchedText = `${word} ${wordTimings[i + 1].word}`;
+        endIdx = i + 1;
+      }
+    }
+
+    if (matchedText) {
+      const endWt = wordTimings[endIdx];
+      const endSec = endWt.startSec + endWt.durationSec;
+      out.push({ text: matchedText, startSec, endSec });
+      lastEndSec = endSec;
+      // skip the consumed second word for multi-word matches
+      if (endIdx > i) i = endIdx;
+    }
+  }
+
+  return out;
+}
+
+// ASS callout overlay. Pop-in scale animation (60% → 115% overshoot → 100%)
+// with fade-in/out, brand-accent fill, thick black outline + drop shadow for
+// readability against ANY background. Spec: BorderStyle=1 (outline+shadow only).
+async function generateNumericCalloutsAss(
+  callouts: NumericCallout[],
+  outputPath: string,
+  w: number,
+  h: number,
+  accentColor: string
+): Promise<void> {
+  const isVertical = h > w;
+  // Big & bold but not silly. ~10% of frame height is a reliable readable size.
+  const fontSize = isVertical ? 150 : 120;
+  const accentAss = toAssColor(accentColor);
+
+  // Anchor (an5 = centered-on-pos). Safe zones derived from avatar layout:
+  //   landscape — left-third, slightly above mid (avatar face is centered, so
+  //               left side is empty even when figure is full-frame)
+  //   vertical  — top area above the avatar head (avatar fills 88% from bottom,
+  //               leaving y < ~200px clear; we sit at 15% with extra hook lockout)
+  const posX = isVertical ? Math.round(w * 0.5) : Math.round(w * 0.21);
+  const posY = isVertical ? Math.round(h * 0.15) : Math.round(h * 0.40);
+
+  // Style line — BorderStyle=1, accent fill, thick black outline (5px), shadow 3px
+  const styleLine = `Style: Stat,Arial,${fontSize},${accentAss},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,5,3,5,0,0,0,1`;
+
+  const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${w}
+PlayResY: ${h}
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+${styleLine}
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+  const events: string[] = [];
+  for (const c of callouts) {
+    // Hold for ≥ 1.4 s after the word ends so viewer can read it
+    const dispStart = c.startSec;
+    const dispEnd = Math.max(c.endSec + 1.4, dispStart + 1.4);
+    const startTs = formatAssTime(dispStart);
+    const endTs = formatAssTime(dispEnd);
+
+    // Override tags:
+    //   \an5\pos — anchored center
+    //   \fad     — 200ms in / 350ms out
+    //   \fscx\fscy 60 → \t(0,250,1.5,...115) overshoot → \t(250,400,0.7,...100) settle
+    const overrides =
+      `{\\an5\\pos(${posX},${posY})\\fad(200,350)` +
+      `\\fscx60\\fscy60` +
+      `\\t(0,250,1.5,\\fscx115\\fscy115)` +
+      `\\t(250,400,0.7,\\fscx100\\fscy100)}`;
+    events.push(`Dialogue: 0,${startTs},${endTs},Stat,,0,0,0,,${overrides}${c.text}`);
+  }
+
+  await fs.writeFile(outputPath, header + events.join("\n") + (events.length ? "\n" : ""), "utf8");
+}
+
+// ─────────────────────────────────────────────
 // Thumbnail extraction
 // ─────────────────────────────────────────────
 
@@ -444,9 +701,37 @@ export async function postProcessAvatarVideo(
   const musicAssetPath = path.join(assetsDir, "music.mp3");
   const musicPath = options.musicPath ?? (existsSync(musicAssetPath) ? musicAssetPath : null);
 
+  // ── Outro card state (T105) ──
+  // When CTA is set AND duration is long enough (≥6s), the lower-third CTA is
+  // replaced by a full-screen branded outro card in the last ~2.5s with the
+  // avatar dimming to 30% opacity. For short videos or no CTA, fall back to the
+  // original lower-third CTA strip.
+  const outroState = computeOutroState(duration, options.cta);
+
+  // ── Intro sting state (T104) ──
+  // When a logo is present AND the video is long enough (≥4s), the first
+  // ~1.6s opens with a black blackout, a centered large logo (1.6× scale),
+  // a corner-logo fade-in at 1.3-1.6s, and a brand-accent vertical strip
+  // that "swooshes" left→right across the frame. Below 4s or without a logo
+  // the intro is skipped entirely (graph behavior unchanged).
+  const introState = computeIntroState(duration, !!logoPath);
+
   // ── ASS files ──
   let ctaAssPath: string | null = null;
-  if (options.cta) {
+  let outroCardAssPath: string | null = null;
+  if (outroState.active) {
+    outroCardAssPath = path.join(outputsDir, "outro_card.ass");
+    await generateOutroCardAss({
+      startSec: outroState.startSec,
+      durationSec: duration,
+      outW,
+      outH,
+      accentColor,
+      headline: outroState.headline,
+      url: outroState.url,
+      outputPath: outroCardAssPath,
+    });
+  } else if (options.cta) {
     ctaAssPath = path.join(outputsDir, "cta.ass");
     await generateCtaAssFile(options.cta, ctaAssPath, duration, outW, outH, accentColor, lowerH);
   }
@@ -469,6 +754,56 @@ export async function postProcessAvatarVideo(
   if (options.script && realism) {
     hookAssPath = path.join(outputsDir, "hook.ass");
     await generateHookAssFile(options.script, hookAssPath, outW, outH, accentColor);
+  }
+
+  // ── Numeric callouts ASS (pop-in stat emphasis) ──
+  // Always-on whenever we have word timings. Detection is highly curated, so
+  // scripts without stats simply produce zero callouts and the file is empty.
+  let calloutsAssPath: string | null = null;
+  if (wordTimings.length > 0) {
+    const callouts = findNumericCallouts(wordTimings);
+    if (callouts.length > 0) {
+      calloutsAssPath = path.join(outputsDir, "callouts.ass");
+      await generateNumericCalloutsAss(callouts, calloutsAssPath, outW, outH, accentColor);
+      logger.info(
+        { count: callouts.length, sample: callouts.slice(0, 3).map((c) => c.text) },
+        "Numeric callouts ASS generated"
+      );
+    } else {
+      logger.info("No numeric callouts detected in script");
+    }
+  }
+
+  // ── Light-leak transitions at sentence boundaries (T102) ──
+  // Identify sentence ends from word timings, lazily generate procedural leak
+  // assets (cached forever in outputs/cache/leaks/), and stash event times +
+  // leak file paths for input wiring + filter graph below.
+  let leakEvents: number[] = [];
+  let leakAssetPaths: string[] = [];
+  if (wordTimings.length > 0) {
+    leakEvents = findSentenceBoundaries(wordTimings, {
+      hookLockoutSec: 1.8,    // avoid the opening hook intro
+      outroLockoutSec: 2.5,   // avoid the CTA outro card
+      totalDuration: duration,
+      minGapSec: 1.2,         // never fire two leaks within 1.2s
+      maxCount: 12,           // cap filter graph complexity
+    });
+    if (leakEvents.length > 0) {
+      const leakCacheDir = path.join(outputsDir, "cache", "leaks");
+      try {
+        leakAssetPaths = await ensureLeakAssets(leakCacheDir);
+        logger.info(
+          { leakCount: leakEvents.length, sample: leakEvents.slice(0, 4).map((t) => t.toFixed(2)) },
+          "Light-leak events scheduled"
+        );
+      } catch (err) {
+        logger.warn({ err: (err as Error).message }, "Leak asset generation failed; skipping leaks");
+        leakEvents = [];
+        leakAssetPaths = [];
+      }
+    } else {
+      logger.info("No sentence-boundary leak events detected");
+    }
   }
 
   const bgImagePath = options.bgImagePath && existsSync(options.bgImagePath) ? options.bgImagePath : null;
@@ -549,6 +884,38 @@ export async function postProcessAvatarVideo(
       elAudioIdx = inputIndex++;
     }
 
+    // Light-leak inputs (T102): one input per scheduled leak event,
+    // round-robin selection from the cached leak variants.
+    const leakInputIndices: number[] = [];
+    if (leakEvents.length > 0 && leakAssetPaths.length > 0) {
+      for (let i = 0; i < leakEvents.length; i++) {
+        const assetPath = leakAssetPaths[i % leakAssetPaths.length];
+        cmd = cmd.input(assetPath);
+        leakInputIndices.push(inputIndex++);
+      }
+    }
+
+    // Intro sting inputs (T104): when active, add two `color` inputs —
+    //   blackoutIdx: full-frame black plate that holds opaque for 0-1.3s
+    //                then fades out 1.3-1.6s
+    //   swooshIdx:   brand-accent vertical strip (30% × outW) that slides
+    //                left→right across the frame between 1.3s and 1.6s
+    // Both are only added when the sting is active so input indices stay
+    // packed and the rest of the graph is unchanged for short videos / no logo.
+    let blackoutIdx = -1;
+    let swooshIdx = -1;
+    if (introState.active) {
+      const swooshW = Math.max(1, Math.round(outW * introState.swooshWidthFrac));
+      const accentFf = brandColorToFfmpeg(accentColor);
+      // Just enough duration to cover the sting window — `loop` extends it via
+      // the overlay's enable= window without consuming extra frames.
+      const stingDur = Math.max(introState.blackoutFadeEnd, introState.swooshEnd) + 0.1;
+      cmd = cmd.input(`color=c=black:s=${outW}x${outH}:r=30:d=${stingDur.toFixed(3)}`).inputOptions(["-f lavfi"]);
+      blackoutIdx = inputIndex++;
+      cmd = cmd.input(`color=c=${accentFf}:s=${swooshW}x${outH}:r=30:d=${stingDur.toFixed(3)}`).inputOptions(["-f lavfi"]);
+      swooshIdx = inputIndex++;
+    }
+
     // Speech audio source: prefer ElevenLabs MP3 when supplied, else use Azure TTS from the avatar video
     const speechSrcIdx = elAudioIdx >= 0 ? elAudioIdx : avatarIdx;
 
@@ -587,12 +954,35 @@ export async function postProcessAvatarVideo(
 
     // ── 3. Ken Burns effect on background (subtle 3% zoom + slow pan) ──
     if (realism) {
-      fp.push(`[bg_lit]crop=${outW}:${outH}:x='min(iw-ow\\,(iw-ow)*t/${duration})':y='(ih-oh)/2'[bg]`);
+      fp.push(`[bg_lit]crop=${outW}:${outH}:x='min(iw-ow\\,(iw-ow)*t/${duration})':y='(ih-oh)/2'[bg_pre]`);
     } else {
-      fp.push(`[bg_lit]crop=${outW}:${outH}:x='(iw-ow)/2':y='(ih-oh)/2'[bg]`);
+      fp.push(`[bg_lit]crop=${outW}:${outH}:x='(iw-ow)/2':y='(ih-oh)/2'[bg_pre]`);
     }
 
-    // ── 3. Avatar compositing ──
+    // ── 3b. Always-on ambient particles (T101) ──
+    // Soft drifting bokeh in safe zones (avoids avatar face area). Adds energy
+    // without distracting; runs on background BEFORE the avatar overlays so
+    // the avatar always sits ON TOP of the particles.
+    fp.push(...buildAmbientParticlesFilter(bgDur, outW, outH, isVertical, "bg_pre", "bg_par"));
+
+    // ── 3c. Light-leak transitions at sentence boundaries (T102) ──
+    // Soft warm radial bloom flashes at sentence ends. Blended via screen on
+    // the BACKGROUND ONLY (before avatar overlay) so the avatar face is never
+    // washed out. When no events, this is a single null-filter pass-through.
+    fp.push(...buildLightLeakFilters({
+      events: leakEvents,
+      leakInputIndices,
+      totalDuration: duration,
+      outW,
+      outH,
+      inputLabel: "bg_par",
+      outputLabel: "bg",
+      opacity: 0.30,
+      preWindowSec: 0.05,
+      postWindowSec: 0.40,
+    }));
+
+    // ── 4. Avatar compositing ──
     let lastV = "av_framed";
 
     // If we need to retime the avatar to match ElevenLabs audio duration,
@@ -605,6 +995,28 @@ export async function postProcessAvatarVideo(
       logger.info({ avatarDuration, elDuration, retimeRatio }, "Retiming avatar video to match ElevenLabs audio");
     }
 
+    // Outro dimming (T105): when the outro card is active, the avatar fades
+    // smoothly from 100% to 30% opacity over `fadeDur` starting at `startSec`.
+    // Implementation: split `av_s` into two streams; full-opacity stream fades
+    // OUT (1→0) while a 30%-alpha copy fades IN (0→0.3). Both overlay onto bg
+    // in sequence — the sum yields a smooth 100%→30% ramp without any
+    // per-pixel `geq` cost. Outside the fade window, only one of the two is
+    // visible (av_a before, av_b after).
+    const buildOverlay = (overlayExpr: string, withFormatAuto: boolean): void => {
+      const fmt = withFormatAuto ? ":format=auto" : "";
+      if (outroState.active) {
+        const start = outroState.startSec.toFixed(3);
+        const dur = outroState.fadeDur.toFixed(3);
+        fp.push(`[av_s]split=2[av_a_src][av_b_src]`);
+        fp.push(`[av_a_src]format=yuva420p,fade=t=out:st=${start}:d=${dur}:alpha=1[av_a_out]`);
+        fp.push(`[av_b_src]format=yuva420p,colorchannelmixer=aa=0.3,fade=t=in:st=${start}:d=${dur}:alpha=1[av_b_in]`);
+        fp.push(`[bg][av_a_out]overlay=${overlayExpr}${fmt}[av_step1]`);
+        fp.push(`[av_step1][av_b_in]overlay=${overlayExpr}${fmt}[av_framed]`);
+      } else {
+        fp.push(`[bg][av_s]overlay=${overlayExpr}${fmt}[av_framed]`);
+      }
+    };
+
     if (useTransparentAvatar) {
       // Transparent WebM (VP9) — avatar already has a real alpha channel.
       // Skip chromakey/despill entirely; just scale and overlay. The overlay
@@ -613,12 +1025,12 @@ export async function postProcessAvatarVideo(
       if (isVertical) {
         fp.push(`[${avSrc}]format=yuva420p,scale=-2:${outH}[av_tall]`);
         fp.push(`[av_tall]crop=${outW}:${outH}:(iw-${outW})/2:0[av_s]`);
-        fp.push(`[bg][av_s]overlay=0:0:format=auto[av_framed]`);
+        buildOverlay("0:0", true);
       } else {
         const avatarH = Math.round(outH * 0.88);
         const avatarY = outH - avatarH - 30;
         fp.push(`[${avSrc}]format=yuva420p,scale=-2:${avatarH}[av_s]`);
-        fp.push(`[bg][av_s]overlay=(W-w)/2:${avatarY}:format=auto[av_framed]`);
+        buildOverlay(`(W-w)/2:${avatarY}`, true);
       }
     } else if (useGreenScreen) {
       // Green-screen + chroma key path (active in production).
@@ -640,13 +1052,13 @@ export async function postProcessAvatarVideo(
         fp.push(`[ck_out]scale=-2:${outH}[av_tall]`);
         fp.push(`[av_tall]crop=${outW}:${outH}:(iw-${outW})/2:0[av_s]`);
         // format=auto so overlay honors the alpha channel produced by chromakey
-        fp.push(`[bg][av_s]overlay=0:0:format=auto[av_framed]`);
+        buildOverlay("0:0", true);
       } else {
         // Landscape output: scale avatar to 88% of output height and anchor to bottom
         const avatarH = Math.round(outH * 0.88);
         const avatarY = outH - avatarH - 30;
         fp.push(`[ck_out]scale=-2:${avatarH}[av_s]`);
-        fp.push(`[bg][av_s]overlay=(W-w)/2:${avatarY}:format=auto[av_framed]`);
+        buildOverlay(`(W-w)/2:${avatarY}`, true);
       }
     } else {
       // Non-green-screen: scale avatar and overlay on background
@@ -654,10 +1066,10 @@ export async function postProcessAvatarVideo(
         // Same cover approach: scale to full height, center-crop width
         fp.push(`[${avSrc}]scale=-2:${outH}[av_tall]`);
         fp.push(`[av_tall]crop=${outW}:${outH}:(iw-${outW})/2:0[av_s]`);
-        fp.push(`[bg][av_s]overlay=0:0[av_framed]`);
+        buildOverlay("0:0", false);
       } else {
         fp.push(`[${avSrc}]scale=${outW}:${outH}:force_original_aspect_ratio=decrease[av_s]`);
-        fp.push(`[bg][av_s]overlay=(W-w)/2:(H-h)/2[av_framed]`);
+        buildOverlay("(W-w)/2:(H-h)/2", false);
       }
     }
 
@@ -683,6 +1095,9 @@ export async function postProcessAvatarVideo(
     lastV = "with_lt";
 
     // ── 7. Logo — top-right with dark glass pill background ──
+    // Captured here so the T104 large-logo overlay (end-of-chain) can size
+    // the centered logo as `cornerMaxH × largeLogoScale`.
+    let cornerMaxH = 0;
     if (logoIdx >= 0) {
       // Constrain by BOTH width and height with aspect preservation. Brand
       // wordmarks are often very wide low-res strips (e.g. 204×41); the
@@ -692,6 +1107,7 @@ export async function postProcessAvatarVideo(
       // becomes 270×54, while a square logo becomes 154×154 — both legible.
       const maxW = isVertical ? Math.round(outW * 0.25) : Math.round(outW * 0.16);
       const maxH = isVertical ? Math.round(outH * 0.08) : Math.round(outH * 0.13);
+      cornerMaxH = maxH; // captured for the T104 large-logo overlay
       const margin = isVertical ? Math.round(outW * 0.025) : Math.round(outW * 0.02);
       // Clarity chain for low-res source logos (e.g. 204×41 → 307×62 = 1.5x):
       //   1. scale with lanczos for the cleanest upscale
@@ -712,7 +1128,17 @@ export async function postProcessAvatarVideo(
       fp.push(
         `[logo_padded]drawbox=x=0:y=0:w=iw:h=ih:color=${accentBorderHex}:t=2[logo_pill]`
       );
-      fp.push(`[${lastV}][logo_pill]overlay=W-w-${margin}:${margin}:format=auto[with_logo]`);
+      // T104 corner logo fade-in: when the intro sting is active, the corner
+      // logo's alpha ramps 0→1 between 1.3s and 1.6s (synchronized with the
+      // blackout fade-out), so it appears to "settle in" as the sting ends.
+      // Otherwise overlay the pill chip directly with full alpha.
+      const cornerFadeIn = buildCornerLogoFadeIn(introState, "logo_pill", "logo_pill_in");
+      if (cornerFadeIn.length > 0) {
+        fp.push(...cornerFadeIn);
+        fp.push(`[${lastV}][logo_pill_in]overlay=W-w-${margin}:${margin}:format=auto[with_logo]`);
+      } else {
+        fp.push(`[${lastV}][logo_pill]overlay=W-w-${margin}:${margin}:format=auto[with_logo]`);
+      }
       lastV = "with_logo";
     }
 
@@ -730,11 +1156,60 @@ export async function postProcessAvatarVideo(
       lastV = "with_caps";
     }
 
-    // ── 10. CTA text in lower-third ──
+    // ── 9b. Numeric callouts (pop-in stat emphasis, off-axis from avatar) ──
+    if (calloutsAssPath) {
+      const escaped = calloutsAssPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+      fp.push(`[${lastV}]subtitles='${escaped}'[with_callouts]`);
+      lastV = "with_callouts";
+    }
+
+    // ── 10. CTA text in lower-third (only when outro card is NOT active) ──
     if (ctaAssPath) {
       const escaped = ctaAssPath.replace(/\\/g, "/").replace(/:/g, "\\:");
       fp.push(`[${lastV}]subtitles='${escaped}'[with_cta]`);
       lastV = "with_cta";
+    }
+
+    // ── 10b. Outro CTA card (T105): full-screen branded card in last ~2.5s ──
+    // Vector ASS rectangle (\p1) filled with brand color + headline + URL with
+    // \move slide-up + \fad. Avatar is already dimmed to 30% in the avatar
+    // overlay step above; this card draws on top of the dimmed scene.
+    if (outroCardAssPath) {
+      const escaped = outroCardAssPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+      fp.push(`[${lastV}]subtitles='${escaped}'[with_outro]`);
+      lastV = "with_outro";
+    }
+
+    // ── 10c. Intro sting (T104) ──
+    // Order matters: the BLACKOUT goes down first (covers everything from
+    // 0-1.3s, fades 1.3-1.6s), then the LARGE LOGO sits on top of the black
+    // (centered, fades in 0-0.4s, fades out 1.0-1.4s), then the SWOOSH strip
+    // sweeps left→right at 1.3-1.6s on top of the fading black. The corner
+    // logo (already on lastV from step 7) is also fading in at 1.3-1.6s, so
+    // by t=1.6s the blackout is gone, the swoosh is off-screen, the centered
+    // logo is gone, and only the corner logo remains — visible on the live
+    // video. When introState is inactive, all three helpers return [] and
+    // the chain is unchanged.
+    if (introState.active && logoIdx >= 0 && blackoutIdx >= 0 && swooshIdx >= 0) {
+      const blackoutFilters = buildBlackoutFilter(introState, blackoutIdx, lastV, "with_blackout");
+      fp.push(...blackoutFilters);
+      lastV = "with_blackout";
+
+      const largeLogoFilters = buildLargeLogoFilters(
+        introState,
+        logoIdx,
+        outW,
+        outH,
+        cornerMaxH,
+        lastV,
+        "with_large_logo",
+      );
+      fp.push(...largeLogoFilters);
+      lastV = "with_large_logo";
+
+      const swooshFilters = buildSwooshFilter(introState, swooshIdx, outW, lastV, "with_swoosh");
+      fp.push(...swooshFilters);
+      lastV = "with_swoosh";
     }
 
     // ── 11. Film grain (after all overlays, for organic texture) ──

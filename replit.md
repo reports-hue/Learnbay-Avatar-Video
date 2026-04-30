@@ -77,30 +77,35 @@ artifacts/
 - `src/services/avatarService.ts` — `generateAvatarVideo()`: always SSML/Azure TTS. (Azure removed `PreSynthesizedAudio` from the avatar batch synthesis API in 2025; ElevenLabs audio is swapped in during ffmpeg post-processing instead.) `useTransparent` flag → requests transparent WebM/VP9 (saves as `avatar_raw.webm`); otherwise mp4/h264. Three modes: transparent-webm (default in realism, no bg image), green-screen-mp4 (legacy fallback), solid-bg-mp4 / Azure-composited bg image.
 - `src/services/elevenLabsService.ts` — `listElevenLabsVoices()`, `synthesizeElevenLabs()` (with-timestamps → saves MP3 + word timings), `previewElevenLabsVoice()`
 - `src/services/ffmpegService.ts` — Full post-processing: transparent-WebM overlay (or chroma key fallback), Ken Burns, color grade, grain, hook text, 3-word captions, audio loudnorm, thumbnail extraction. `useTransparentAvatar` takes precedence over `useGreenScreen`.
+- `src/services/calloutService.ts` — Numeric pop-in callouts (T103): `findNumericCallouts()` scans wordTimings for `\d+%`, `$KMB`, comma-grouped numbers, `\d+x` multipliers, scale-words; `generateNumericCalloutsAss()` builds ASS with pop animation (60→115→100% scale), brand accent fill + black outline, BorderStyle=1. 2.5s hook lockout + 2.0s cooldown.
+- `src/services/leakService.ts` — Light-leak transitions at sentence boundaries (T102): `findSentenceBoundaries()` extracts sentence-end times from wordTimings (1.8s hook lockout, 2.5s outro lockout, 1.2s minGap, max 12 events). `ensureLeakAssets()` lazily generates 3 procedural warm leak MP4s (warm horizontal, amber radial, gold vertical) to `outputs/cache/leaks/` via `gradients` + `overlay`. `buildLightLeakFilters()` produces a screen-blend filter chain at 0.30 opacity, 0.05s pre-window, 0.40s post-window. Wired between particles and avatar overlay so face is never washed out.
+- `src/services/outroCardService.ts` — Outro CTA card (T105): `parseCtaText()` splits "Visit X.com" / "Follow @x" patterns into headline + url. `computeOutroState(duration, cta)` returns `{active, startSec, fadeDur, headline, url}` — active only when `cta` is non-empty AND duration ≥ 6s; startSec = `max(duration - 2.5, duration * 0.6)`. `generateOutroCardAss()` builds an ASS file with three styles (OutroBg, OutroHead, OutroUrl), a vector rectangle (`\p1...\p0`) for the card BG filled with brand accent, and `\move` + `\fad` slide-up animations on the headline (white bold + dark outline + shadow) and URL (white smaller). Landscape: card 65%×36% centered. Vertical: 85%×32%. **ASS gotcha:** commas inside `{...}` override blocks (e.g., `\pos(x,y)`, `\move(x1,y1,x2,y2,t1,t2)`) must be PLAIN commas — `\,` escape ONLY applies inside FFmpeg `enable=` expressions at the filter-graph level. When `outroState.active`, `ffmpegService` skips the legacy lower-third CTA generation (mutually exclusive) and the avatar overlay path takes the split + double-overlay dim path described in step 4 above.
 - `src/routes/voices.ts` — `GET /api/voices` (Azure, 1hr cache), `GET /api/elevenlabs/voices` (ElevenLabs, x-elevenlabs-key header), `POST /api/elevenlabs/preview`, `POST /api/upload-photo`
 - `src/routes/generate.ts` — `POST /api/generate` (SSE), `GET /api/video/:filename`, `POST /api/preview-voice`
 
 ### FFmpeg Filter Graph (order, Realism Mode)
 
 1. Background source, oversized 3% (`gradients` or `color`)
-2. Ken Burns crop pan on background
-3. Avatar compositing — **active path** (tuned Apr 30 2026 for JPEG-compressed Azure source): `format=yuva420p,chromakey=0x00ff00:similarity=0.20:blend=0.12` → `despill=type=green:mix=0.4` → `gblur=sigma=1.5:steps=1:planes=8` (alpha-only blur) → `scale` → `overlay :format=auto`. Tighter similarity prevents holes in light fabric; alpha-plane blur smooths blocky stair-stepping at silhouette edges. Transparent-WebM branch (`format=yuva420p` → `scale` → `overlay …:format=auto`) exists in code for future Azure API versions but is currently disabled — see Known Azure Limitations.
-4. Color grade (`eq`) + sharpen (`unsharp`) + vignette
-5. Lower-third dark overlay (2-layer `drawbox`)
-6. Brand accent line (`drawbox`)
-7. Logo overlay (top-right)
-8. Opening hook text (0–2s ASS subtitle)
-9. 3-word animated captions (`subtitles`)
-10. CTA text (`subtitles`)
-11. Film grain (`noise`)
-12. Fade in/out
-13. FPS normalize to 30fps
+2. Ken Burns crop pan on background → `[bg_pre]`
+3a. Ambient particles (T101) — drifting bokeh in safe zones, screen-blended via gbrp → `[bg_par]`
+3b. Light-leak transitions (T102) — warm radial blooms at sentence boundaries, screen-blended → `[bg]`
+4. Avatar compositing — **active path** (tuned Apr 30 2026 for JPEG-compressed Azure source): `format=yuva420p,chromakey=0x00ff00:similarity=0.20:blend=0.12` → `despill=type=green:mix=0.4` → `gblur=sigma=1.5:steps=1:planes=8` (alpha-only blur) → `scale` → `overlay :format=auto`. Tighter similarity prevents holes in light fabric; alpha-plane blur smooths blocky stair-stepping at silhouette edges. Transparent-WebM branch (`format=yuva420p` → `scale` → `overlay …:format=auto`) exists in code for future Azure API versions but is currently disabled — see Known Azure Limitations. **Outro dimming (T105):** when `outroState.active`, the avatar is split into two streams that overlay sequentially onto the bg — `av_a` (full opacity, `fade=t=out:alpha=1` at startSec/fadeDur) and `av_b` (alpha-mixed to 0.3 via `colorchannelmixer=aa=0.3`, `fade=t=in:alpha=1`). The two overlays compose into a smooth 100%→30% opacity ramp without per-pixel `geq` cost.
+5. Color grade (`eq`) + sharpen (`unsharp`) + vignette
+6. Lower-third dark overlay (2-layer `drawbox`)
+7. Brand accent line (`drawbox`)
+8. Logo overlay (top-right)
+9. Opening hook text (0–2s ASS subtitle)
+10. 3-word animated captions (`subtitles`)
+11. Numeric pop-in callouts (T103) — ASS subtitle with pop scale animation
+12. CTA text (`subtitles`) — **suppressed when outro card is active** (mutually exclusive with step 12b)
+12b. Outro CTA card (T105) — full-screen branded card in the last 2.5s when `outroState.active`. Vector ASS rectangle (`\p1`) filled with brand accent + headline + URL using `\move` slide-up + `\fad`. Avatar already dimmed to 30% in step 4.
+13. Film grain (`noise`)
+14. Fade in/out
+15. FPS normalize to 30fps
 
 ### Available FFmpeg Filters (confirmed in ffmpeg-static 5.3.0)
 
-`gradients`, `chromakey`, `drawbox` (alpha), `subtitles` (libass), `vignette`, `unsharp`, `fade`, `overlay`, `scale`, `pad`, `fps`, `eq`, `noise`, `loudnorm`, `aecho`, `zoompan`, `crop`, `color`
-
-**NOT available**: `drawtext` (no libfreetype)
+`gradients`, `chromakey`, `drawbox` (alpha, but no `eval=frame` in 6.1.x), `drawtext` (per-frame x/y supported, used for ambient particles), `subtitles` (libass), `vignette`, `unsharp`, `fade`, `overlay`, `blend` (with `enable=`, requires `format=gbrp` for clean screen mode), `gblur`, `tpad`, `format`, `scale`, `pad`, `fps`, `eq`, `noise`, `loudnorm`, `aecho`, `zoompan`, `crop`, `color`, `setsar`
 
 ### Azure Avatar API
 
