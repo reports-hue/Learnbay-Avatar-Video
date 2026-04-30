@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import {
   Globe, Sparkles, Save, RotateCcw, Building2, AlertCircle,
-  Check, Loader2, Link2,
+  Check, Loader2, Link2, Upload, X,
 } from "lucide-react";
 import type { BrandProfile, BrandAnalysisResult } from "@/lib/types";
 import { QUICK_VOICES, VOICE_STYLES, AVATARS, SCRIPT_STYLES, CAPTION_STYLES, SCENE_PRESETS } from "@/lib/config";
@@ -61,10 +61,45 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
 
   const [form, setForm] = useState<BrandProfile>({ ...brand });
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
   const hasChanges = JSON.stringify(form) !== JSON.stringify(brand) || websiteUrl !== brand.websiteUrl;
 
   function setF(key: keyof BrandProfile, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function uploadLogoFile(file: File) {
+    setUploadError(null);
+    if (file.size > 5 * 1024 * 1024) {
+      setUploadError("Logo file is too large (max 5MB).");
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("logo", file);
+      const res = await fetch("/api/upload-logo", { method: "POST", body: fd });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(err.error ?? `Upload failed (HTTP ${res.status})`);
+      }
+      const data = await res.json() as { logoUrl: string };
+      setF("logoUrl", data.logoUrl);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  function clearLogo() {
+    setF("logoUrl", "");
+    setUploadError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function analyzeWebsite() {
@@ -229,22 +264,76 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
       {/* ── Visual Identity ── */}
       <div className="bg-white border border-border rounded-xl p-5 space-y-5">
         <Section title="Visual Identity">
-          <Field label="Brand Logo URL" hint="Displayed in the top-right of every video">
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input type="url" value={form.logoUrl} onChange={(e) => setF("logoUrl", e.target.value)}
-                  placeholder="https://example.com/logo.png" className="input pl-9" />
-              </div>
-              {form.logoUrl && (
-                <div className="w-10 h-10 rounded-lg border border-border bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
-                  <img src={form.logoUrl} alt="logo preview" className="w-full h-full object-contain"
-                    onError={(e) => {
-                      e.currentTarget.style.display = "none";
-                      const p = e.currentTarget.parentElement;
-                      if (p) p.innerHTML = '<span class="text-muted-foreground text-[10px]">Error</span>';
-                    }}
+          <Field label="Brand Logo" hint="Displayed in the top-right of every video. Upload a file or paste a URL — PNG, JPG, SVG, or WebP supported (max 5MB).">
+            <div className="space-y-2.5">
+              {/* Preview row — large, on a dark "video" background so users
+                  see how the logo will actually look against the rendered chip. */}
+              {form.logoUrl ? (
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-gradient-to-br from-slate-900 to-slate-800 border border-border">
+                  <div className="relative px-3 py-2 rounded-lg bg-[#121A24]/95 border border-white/10 flex items-center justify-center min-h-[48px]">
+                    <img
+                      src={form.logoUrl}
+                      alt="logo preview"
+                      className="max-h-10 max-w-[160px] object-contain"
+                      onError={(e) => {
+                        e.currentTarget.style.opacity = "0.2";
+                      }}
+                    />
+                  </div>
+                  <div className="flex-1 text-[11px] text-slate-300 font-mono truncate" title={form.logoUrl}>
+                    {form.logoUrl.length > 60 ? form.logoUrl.slice(0, 60) + "…" : form.logoUrl}
+                  </div>
+                  <Button onClick={clearLogo} variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-white/10">
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="p-4 rounded-lg border border-dashed border-border bg-gray-50 text-center text-xs text-muted-foreground">
+                  No logo set — upload one or paste a URL below.
+                </div>
+              )}
+
+              {/* Upload + URL controls */}
+              <div className="flex gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml,.svg"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void uploadLogoFile(file);
+                  }}
+                />
+                <Button
+                  onClick={() => fileInputRef.current?.click()}
+                  variant="outline"
+                  size="sm"
+                  disabled={uploading}
+                  className="flex-shrink-0"
+                >
+                  {uploading ? (
+                    <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…</>
+                  ) : (
+                    <><Upload className="w-3.5 h-3.5" /> Upload</>
+                  )}
+                </Button>
+                <div className="relative flex-1">
+                  <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <input
+                    type="url"
+                    value={form.logoUrl}
+                    onChange={(e) => setF("logoUrl", e.target.value)}
+                    placeholder="…or paste an image URL"
+                    className="input pl-9 text-xs"
                   />
+                </div>
+              </div>
+
+              {uploadError && (
+                <div className="flex items-start gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <span>{uploadError}</span>
                 </div>
               )}
             </div>

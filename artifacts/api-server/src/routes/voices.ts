@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { v4 as uuidv4 } from "uuid";
 import { logger } from "../lib/logger.js";
 import { listElevenLabsVoices, previewElevenLabsVoice } from "../services/elevenLabsService.js";
+import { prepareLogoFromBuffer } from "../services/logoService.js";
 
 const router: IRouter = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -117,6 +118,69 @@ router.post("/upload-photo", upload.single("photo"), (req: Request, res: Respons
   logger.info({ filename: req.file.filename }, "Photo uploaded");
   res.json({ photoUrl, filename: req.file.filename, localPath: req.file.path });
 });
+
+// ─── POST /api/upload-logo ──────────────────────────────────────
+//
+// Accepts a multipart "logo" field with PNG/JPEG/GIF/WEBP/BMP/SVG. SVG is
+// rasterized to PNG via ImageMagick (logoService.prepareLogoFromBuffer) so
+// the render pipeline can use it directly. Returns a `/api/video/...` URL
+// suitable for storing in `BrandProfile.logoUrl`.
+//
+// Files go through MEMORY storage (not multer disk), because the SVG path
+// has to rasterize before persisting — writing the raw SVG to disk first
+// then converting wastes a round trip. 5MB upload cap matches the URL
+// downloader.
+const uploadLogo = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ok =
+      file.mimetype.startsWith("image/") ||
+      file.mimetype === "application/octet-stream"; // some browsers send SVG with this
+    if (ok) cb(null, true);
+    else cb(new Error("Only image files are allowed"));
+  },
+});
+
+router.post(
+  "/upload-logo",
+  uploadLogo.single("logo"),
+  async (req: Request, res: Response) => {
+    if (!req.file) {
+      res.status(400).json({ error: "No logo uploaded" });
+      return;
+    }
+    try {
+      const asset = await prepareLogoFromBuffer(
+        req.file.buffer,
+        outputsDir,
+        req.file.mimetype,
+      );
+      // logoService writes to outputsDir/logo_dl.png by convention. Move
+      // the file to a unique name so multiple users uploading concurrently
+      // don't clobber each other.
+      const finalName = `logo_${uuidv4().replace(/-/g, "").slice(0, 12)}.png`;
+      const finalPath = path.join(outputsDir, finalName);
+      await (await import("fs/promises")).rename(asset.path, finalPath);
+      const logoUrl = `/api/video/${finalName}`;
+      logger.info(
+        { filename: finalName, fmt: asset.sourceFormat, w: asset.width, h: asset.height },
+        "Logo uploaded",
+      );
+      res.json({
+        logoUrl,
+        filename: finalName,
+        width: asset.width,
+        height: asset.height,
+        sourceFormat: asset.sourceFormat,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn({ err: msg }, "Logo upload failed");
+      res.status(400).json({ error: msg });
+    }
+  },
+);
 
 // ─── GET /api/elevenlabs/status ─────────────────────────────────
 router.get("/elevenlabs/status", (_req: Request, res: Response) => {

@@ -34,6 +34,7 @@ import {
   generateStatPopinAss,
 } from "./statPopinService.js";
 import type { Segment } from "./scriptSegmenter.js";
+import { prepareLogoFromUrl, probeImageDims } from "./logoService.js";
 
 /**
  * Select an ffmpeg binary that supports the full filter set we need.
@@ -782,18 +783,53 @@ export async function postProcessAvatarVideo(
   const backgroundStyle = options.backgroundStyle ?? "cinematic_dark";
 
   // ── Resolve logo ──
+  // logoService.prepareLogoFromUrl handles: timeout, redirects, real
+  // browser User-Agent (CDNs reject default axios UA), content-type
+  // validation, 5MB cap, and SVG → PNG rasterization via ImageMagick.
+  // The previous inline downloader had none of these and silently fell
+  // through to the bundled logo on every CDN that returns SVG or rejects
+  // the default axios UA. We also probe dimensions here so the corner
+  // pill chain can choose aspect-aware padding (square icon vs wordmark).
   let logoPath: string | null = null;
+  let logoDims: { width: number; height: number } | null = null;
   if (options.logoUrl) {
     try {
-      const dlPath = path.join(outputsDir, "logo_dl.png");
-      await downloadUrl(options.logoUrl, dlPath);
-      logoPath = dlPath;
-    } catch { logger.warn("Logo download failed, skipping"); }
+      // Local upload-served URLs (/api/video/logo_xxx.png) come back to us
+      // with a relative path — short-circuit those to the filesystem path.
+      const localMatch = /^\/api\/video\/(.+)$/.exec(options.logoUrl);
+      if (localMatch) {
+        const candidate = path.join(outputsDir, localMatch[1] ?? "");
+        if (existsSync(candidate)) {
+          logoPath = candidate;
+          logoDims = await probeImageDims(candidate);
+        }
+      }
+      if (!logoPath) {
+        const asset = await prepareLogoFromUrl(options.logoUrl, outputsDir);
+        logoPath = asset.path;
+        logoDims = { width: asset.width, height: asset.height };
+        logger.info(
+          { fmt: asset.sourceFormat, w: asset.width, h: asset.height },
+          "Brand logo prepared from URL",
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "Logo URL preparation failed, falling back to built-in logo",
+      );
+    }
   }
   if (!logoPath) {
     const builtinLogo = path.join(assetsDir, "logo.png");
-    if (existsSync(builtinLogo)) logoPath = builtinLogo;
+    if (existsSync(builtinLogo)) {
+      logoPath = builtinLogo;
+      logoDims = await probeImageDims(builtinLogo);
+    }
   }
+  // Aspect ratio guides the pill padding ratio downstream. Default to 1.0
+  // (square) if we couldn't probe, so we get safe symmetric padding.
+  const logoAspect = logoDims && logoDims.height > 0 ? logoDims.width / logoDims.height : 1.0;
 
   // ── Resolve music ──
   const musicAssetPath = path.join(assetsDir, "music.mp3");
@@ -1432,24 +1468,69 @@ export async function postProcessAvatarVideo(
       const maxH = isVertical ? Math.round(outH * 0.08) : Math.round(outH * 0.13);
       cornerMaxH = maxH; // captured for the T104 large-logo overlay
       const margin = isVertical ? Math.round(outW * 0.025) : Math.round(outW * 0.02);
-      // Clarity chain for low-res source logos (e.g. 204×41 → 307×62 = 1.5x):
-      //   1. scale with lanczos for the cleanest upscale
-      //   2. unsharp on luma only (chroma=0 prevents color fringing on text)
-      //   3. pill background uses a slightly-lighter dark ("glass") so it
-      //      reads as a defined chip — pure black at 80% blended with the
-      //      cinematic vignette at the top of frame and disappeared.
-      //   4. 2px brand-accent border via drawbox gives the chip a clean
-      //      edge against ANY background (dark bg, blown-out highlight, etc.)
-      const accentSrc = (options.primaryColor ?? "#4A9FFF").replace("#", "").toUpperCase();
-      const accentBorderHex = `0x${accentSrc.padEnd(6, "0").slice(0, 6)}99`; // ~60% alpha
+      // ── Premium corner-chip chain (v2) ──
+      //
+      // Three problems fixed vs the previous chain:
+      //
+      //   (a) Halos around wordmark text — caused by `unsharp` at amount=0.5
+      //       on already-upscaled lanczos output. lanczos is sharp enough on
+      //       its own for the 1.3–1.6x typical upscale; the second sharpen
+      //       was over-cooking edges. The pass is removed.
+      //
+      //   (b) Bright accent-color border clashed with brand-color pixels
+      //       INSIDE the logo (e.g. cyan border around a cyan-on-black
+      //       wordmark made the chip look like it was vibrating). Replaced
+      //       with a subtle 1px hairline at 0x2A3340 — slightly lighter than
+      //       the chip background — which reads as a clean glass edge on
+      //       any backdrop without color competition.
+      //
+      //   (c) Sharp-cornered rectangle looked old. The padded rect now gets
+      //       rounded corners via a `geq` alpha mask. Corner radius is ~14%
+      //       of the chip height (clamped to a sane min/max) — matches the
+      //       rounded-rect language used by the rest of the app UI.
+      //
+      // Padding is aspect-aware:
+      //   - logoAspect ≤ 1.3 → square icon → symmetric breathing room
+      //   - 1.3 < aspect ≤ 2.5 → balanced logo+text combos
+      //   - aspect > 2.5 → wide wordmarks get tighter horizontal padding so
+      //     the chip doesn't span half the frame
+      let padX: number; let padY: number; let xOff: number; let yOff: number;
+      if (logoAspect <= 1.3) {
+        padX = 1.40; padY = 1.40; xOff = 0.20; yOff = 0.20;
+      } else if (logoAspect <= 2.5) {
+        padX = 1.22; padY = 1.55; xOff = 0.11; yOff = 0.275;
+      } else {
+        padX = 1.14; padY = 1.62; xOff = 0.07; yOff = 0.31;
+      }
       fp.push(
-        `[${logoLabelCorner}]scale=w=${maxW}:h=${maxH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,format=yuva420p,unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.5:chroma_amount=0.0,format=rgba[logo_scaled]`
+        // Pure lanczos scale — no second-stage sharpen. format=rgba so the
+        // pad stage can lay down the chip background underneath the alpha.
+        `[${logoLabelCorner}]scale=w=${maxW}:h=${maxH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,format=rgba[logo_scaled]`
       );
       fp.push(
-        `[logo_scaled]pad=iw*1.30:ih*1.66:iw*0.15:ih*0.33:color=0x121A24F0[logo_padded]`
+        // Glass chip background: 0x121A24 at F0 alpha (~94%) is dark enough
+        // to anchor against a bright avatar yet still feels "lit" rather
+        // than a cutout black hole.
+        `[logo_scaled]pad=iw*${padX.toFixed(3)}:ih*${padY.toFixed(3)}:iw*${xOff.toFixed(3)}:ih*${yOff.toFixed(3)}:color=0x121A24F0[logo_padded]`
       );
+      // Round the corners with a geq alpha mask. R = 14% of chip height,
+      // clamped to [10, 24] px so it reads as a soft chip on both 1080p
+      // landscape and 1080×1920 vertical without going overboard.
+      const chipApproxH = Math.round(maxH * padY);
+      const cornerR = Math.max(10, Math.min(24, Math.round(chipApproxH * 0.14)));
+      // For each pixel, compute its distance from the nearest corner anchor.
+      // A point is INSIDE the rounded rect iff: (dx² + dy²) ≤ R², where
+      //   dx = R-X if X<R, else (X-(W-1-R) if X>W-1-R, else 0)
+      //   dy = R-Y if Y<R, else (Y-(H-1-R) if Y>H-1-R, else 0)
+      // Note: the previous formulation of this filter only kept pixels where
+      // BOTH X and Y were within the corner band, which erased the long
+      // straight edges of the chip and produced a "dumbbell" silhouette.
       fp.push(
-        `[logo_padded]drawbox=x=0:y=0:w=iw:h=ih:color=${accentBorderHex}:t=2[logo_pill]`
+        `[logo_padded]format=rgba,geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)':a='if(lte(hypot(if(lt(X\\,${cornerR})\\,${cornerR}-X\\,if(gt(X\\,W-1-${cornerR})\\,X-(W-1-${cornerR})\\,0))\\,if(lt(Y\\,${cornerR})\\,${cornerR}-Y\\,if(gt(Y\\,H-1-${cornerR})\\,Y-(H-1-${cornerR})\\,0)))\\,${cornerR})\\,alpha(X\\,Y)\\,0)'[logo_rounded]`
+      );
+      // Subtle hairline edge — neutral lift, no brand-color competition.
+      fp.push(
+        `[logo_rounded]drawbox=x=0:y=0:w=iw:h=ih:color=0x2A334060:t=1[logo_pill]`
       );
       // T104 corner logo fade-in: when the intro sting is active, the corner
       // logo's alpha ramps 0→1 between 1.3s and 1.6s (synchronized with the
