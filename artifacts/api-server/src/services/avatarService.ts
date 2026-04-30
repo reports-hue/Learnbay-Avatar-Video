@@ -115,7 +115,10 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
   const key = process.env.AZURE_SPEECH_KEY ?? "";
   const jobId = uuidv4();
 
-  const baseUrl = `https://${region}.api.cognitive.microsoft.com/avatar/batchsyntheses/${jobId}?api-version=2024-08-01`;
+  // Use 2024-04-15-preview because it supports `inputKind: "PreSynthesizedAudio"`
+  // (lip-sync to externally-supplied audio such as ElevenLabs). The 2024-08-01
+  // GA version dropped that input kind and only accepts PlainText/SSML.
+  const baseUrl = `https://${region}.api.cognitive.microsoft.com/avatar/batchsyntheses/${jobId}?api-version=2024-04-15-preview`;
 
   // In realism mode: use green screen background for chroma key compositing
   const effectiveBgColor = config.realism !== false ? "#00FF00FF" : config.backgroundColor;
