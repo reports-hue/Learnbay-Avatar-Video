@@ -57,6 +57,7 @@ export function VideoLibrary({ library, addVideo, removeVideo, setPage }: Props)
           videoUrl: v.videoUrl,
           thumbnailUrl: v.thumbnailUrl ?? undefined,
           script: "",
+          brandTheme: { bgColor1: "#0D1B2A", bgColor2: "#1B2A4A", accentColor: "#7C3AED" },
           createdAt: v.createdAt,
         }));
         setRecoverMsg(`Recovered ${toAdd.length} video${toAdd.length > 1 ? "s" : ""}.`);
