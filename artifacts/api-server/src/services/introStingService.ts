@@ -104,7 +104,12 @@ function toFfmpegHex(hex: string): string {
  * Build the filter chain for the centered large logo overlay.
  *
  * Inputs:
- *   - `logoIdx`: ffmpeg input index of the logo file
+ *   - `logoSrcLabel`: the looped, multi-frame logo stream label (e.g. "logo_v_b").
+ *     MUST already have proper monotonically increasing PTS — the upstream loop
+ *     preprocessor handles this. If you pass `[N:v]` directly (a still PNG with
+ *     PTS=0 only), the fade filter sees the source AT THE START OF FADE-IN
+ *     (alpha=0) and produces a fully-transparent output forever. This is why
+ *     ffmpegService preprocesses the logo with `loop=-1,setpts=N/30/TB,fps=30`.
  *   - `cornerMaxH`: the max-H the existing corner logo would render at
  *   - `inputLabel`: the label of the video stream BEFORE this overlay (e.g. "with_blackout")
  *
@@ -114,7 +119,7 @@ function toFfmpegHex(hex: string): string {
  */
 export function buildLargeLogoFilters(
   state: IntroState,
-  logoIdx: number,
+  logoSrcLabel: string,
   outW: number,
   outH: number,
   cornerMaxH: number,
@@ -128,7 +133,7 @@ export function buildLargeLogoFilters(
   return [
     // Scale logo to the large size, force_original_aspect_ratio=decrease so
     // wide wordmarks stay legible. format=yuva420p preserves alpha.
-    `[${logoIdx}:v]scale=w=-1:h=${largeH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,format=yuva420p[large_logo_scaled]`,
+    `[${logoSrcLabel}]scale=w=-1:h=${largeH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,format=yuva420p[large_logo_scaled]`,
     // Fade in 0→largeLogoFadeInEnd, then fade out largeLogoFadeOutStart→largeLogoFadeOutEnd.
     `[large_logo_scaled]fade=t=in:st=0:d=${fadeInDur.toFixed(3)}:alpha=1,fade=t=out:st=${state.largeLogoFadeOutStart.toFixed(3)}:d=${fadeOutDur.toFixed(3)}:alpha=1[large_logo_anim]`,
     // Center on the frame.

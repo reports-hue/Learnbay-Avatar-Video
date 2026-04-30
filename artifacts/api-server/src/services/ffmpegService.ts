@@ -1098,6 +1098,26 @@ export async function postProcessAvatarVideo(
     // Captured here so the T104 large-logo overlay (end-of-chain) can size
     // the centered logo as `cornerMaxH × largeLogoScale`.
     let cornerMaxH = 0;
+    // Label that downstream filters (corner pill chain + T104 large logo) will
+    // consume for the logo source. When the intro sting is INACTIVE, the
+    // corner logo overlays a still PNG with no fade — overlay handles single-
+    // frame inputs natively, so we use [N:v] directly. When the intro sting
+    // is ACTIVE, BOTH the corner logo (fade-in 1.3-1.6s) AND the large logo
+    // (fade-in 0-0.4s, fade-out 1.0-1.4s) need to apply `fade=alpha=1` to the
+    // logo stream. `fade` evaluates per source-frame PTS — a still PNG has
+    // ONE frame at PTS=0, so `fade=t=in:st=0:d=0.4:alpha=1` resolves to
+    // alpha=0 (start of fade) FOREVER, producing a fully-transparent logo.
+    // Fix: loop the still frame into a 30fps multi-frame stream with proper
+    // PTS, then split=2 so both fade chains can consume it independently.
+    let logoLabelCorner = `${logoIdx}:v`;
+    let logoLabelLarge = `${logoIdx}:v`;
+    if (logoIdx >= 0 && introState.active) {
+      fp.push(
+        `[${logoIdx}:v]loop=loop=-1:size=1:start=0,settb=AVTB,setpts=N/30/TB,fps=30,format=rgba,split=2[logo_v_a][logo_v_b]`
+      );
+      logoLabelCorner = "logo_v_a";
+      logoLabelLarge = "logo_v_b";
+    }
     if (logoIdx >= 0) {
       // Constrain by BOTH width and height with aspect preservation. Brand
       // wordmarks are often very wide low-res strips (e.g. 204×41); the
@@ -1120,7 +1140,7 @@ export async function postProcessAvatarVideo(
       const accentSrc = (options.primaryColor ?? "#4A9FFF").replace("#", "").toUpperCase();
       const accentBorderHex = `0x${accentSrc.padEnd(6, "0").slice(0, 6)}99`; // ~60% alpha
       fp.push(
-        `[${logoIdx}:v]scale=w=${maxW}:h=${maxH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,format=yuva420p,unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.5:chroma_amount=0.0,format=rgba[logo_scaled]`
+        `[${logoLabelCorner}]scale=w=${maxW}:h=${maxH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,format=yuva420p,unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.5:chroma_amount=0.0,format=rgba[logo_scaled]`
       );
       fp.push(
         `[logo_scaled]pad=iw*1.30:ih*1.66:iw*0.15:ih*0.33:color=0x121A24F0[logo_padded]`
@@ -1197,7 +1217,7 @@ export async function postProcessAvatarVideo(
 
       const largeLogoFilters = buildLargeLogoFilters(
         introState,
-        logoIdx,
+        logoLabelLarge,
         outW,
         outH,
         cornerMaxH,
