@@ -387,15 +387,17 @@ export async function generateStatPopinAss(opts: GenerateStatPopinAssOptions): P
 
   if (renderables.length === 0) return false;
 
-  // Layout — same safe-zone strategy as T103 (left third in landscape, top
-  // band in vertical), but with a wider footprint to fit the pill.
-  const cx = isVertical ? Math.round(w * 0.5) : Math.round(w * 0.21);
-  const cy = isVertical ? Math.round(h * 0.18) : Math.round(h * 0.42);
-  const numberFontSize = isVertical ? 150 : 130;
+  // Layout — left-side in both orientations so the stat never covers the
+  // avatar's face. Vertical: upper-left quadrant; landscape: left-third.
+  const cx = isVertical ? Math.round(w * 0.22) : Math.round(w * 0.17);
+  const cy = isVertical ? Math.round(h * 0.22) : Math.round(h * 0.40);
+  // Reduced font sizes — the old 150/130 px values caused the pill to cover
+  // half the avatar face. 88/78 px give a premium look without dominating.
+  const numberFontSize = isVertical ? 88 : 78;
   const suffixFontSize = Math.round(numberFontSize * 0.6);
 
   // Pill dims — wide enough for "$2.5M" + suffix; vary slightly per platform
-  const pillW = isVertical ? Math.round(w * 0.55) : Math.round(w * 0.28);
+  const pillW = isVertical ? Math.round(w * 0.34) : Math.round(w * 0.20);
   const pillH = Math.round(numberFontSize * 1.55);
   const pillRadius = Math.round(pillH * 0.45);
 

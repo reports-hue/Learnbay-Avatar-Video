@@ -140,6 +140,13 @@ export function buildLargeLogoFilters(
   const largeMaxW = Math.round(outW * 0.80);
   const fadeInDur = state.largeLogoFadeInEnd; // starts at t=0
   const fadeOutDur = state.largeLogoFadeOutEnd - state.largeLogoFadeOutStart;
+  // Fly-in offset: logo rises from N px below centre to centre over 0.35s.
+  // Using overlay's per-frame `y` expression (ffmpeg evaluates W/H/w/h/t
+  // per frame for overlay). The y offset starts at +flyPx, eases to 0 by
+  // t=0.35s and holds. `max(0,...)` clamps the overshoot at rest.
+  const flyPx = Math.round(outH * 0.10); // 10 % of frame height
+  const flyDur = 0.35;
+  const yExpr = `'(H-h)/2+${flyPx}*max(0\\,1-t/${flyDur.toFixed(3)})'`;
   return [
     // Scale logo to the large size, fitting within (largeMaxW × largeH).
     // `force_original_aspect_ratio=decrease` shrinks to fit BOTH bounds
@@ -147,8 +154,8 @@ export function buildLargeLogoFilters(
     `[${logoSrcLabel}]scale=w=${largeMaxW}:h=${largeH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,format=yuva420p[large_logo_scaled]`,
     // Fade in 0→largeLogoFadeInEnd, then fade out largeLogoFadeOutStart→largeLogoFadeOutEnd.
     `[large_logo_scaled]fade=t=in:st=0:d=${fadeInDur.toFixed(3)}:alpha=1,fade=t=out:st=${state.largeLogoFadeOutStart.toFixed(3)}:d=${fadeOutDur.toFixed(3)}:alpha=1[large_logo_anim]`,
-    // Center on the frame.
-    `[${inputLabel}][large_logo_anim]overlay=(W-w)/2:(H-h)/2:format=auto[${outputLabel}]`,
+    // Centre horizontally; fly-in from below (y eases from +flyPx → 0 over flyDur).
+    `[${inputLabel}][large_logo_anim]overlay=x='(W-w)/2':y=${yExpr}:format=auto[${outputLabel}]`,
   ];
 }
 

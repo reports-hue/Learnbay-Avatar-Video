@@ -1174,7 +1174,7 @@ export async function postProcessAvatarVideo(
       // Just enough duration to cover the sting window — `loop` extends it via
       // the overlay's enable= window without consuming extra frames.
       const stingDur = Math.max(introState.blackoutFadeEnd, introState.swooshEnd) + 0.1;
-      cmd = cmd.input(`color=c=black:s=${outW}x${outH}:r=30:d=${stingDur.toFixed(3)}`).inputOptions(["-f lavfi"]);
+      cmd = cmd.input(`color=c=white:s=${outW}x${outH}:r=30:d=${stingDur.toFixed(3)}`).inputOptions(["-f lavfi"]);
       blackoutIdx = inputIndex++;
       cmd = cmd.input(`color=c=${accentFf}:s=${swooshW}x${outH}:r=30:d=${stingDur.toFixed(3)}`).inputOptions(["-f lavfi"]);
       swooshIdx = inputIndex++;
@@ -1353,15 +1353,15 @@ export async function postProcessAvatarVideo(
     }
 
     // ── 4. Color grade + cinematic sharpening ──
+    // Vignette was removed: it created a visible curved dark arc at the bottom
+    // of the avatar frame that users perceived as the avatar being "cut off".
     if (realism) {
       fp.push(`[${lastV}]eq=brightness=0.02:saturation=1.1:contrast=1.05[graded]`);
       fp.push(`[graded]unsharp=3:3:0.6:3:3:0.0[sharpened]`);
-      fp.push(`[sharpened]vignette=PI/6:0.8[vignetted]`);
-      lastV = "vignetted";
+      lastV = "sharpened";
     } else {
       fp.push(`[${lastV}]unsharp=5:5:0.8:5:5:0[sharpened]`);
-      fp.push(`[sharpened]vignette=PI/5:0.8[vignetted]`);
-      lastV = "vignetted";
+      lastV = "sharpened";
     }
 
     // ── 5. Subtle lower-third gradient (single very-soft layer) ──
@@ -1681,9 +1681,17 @@ export async function postProcessAvatarVideo(
         ].join(":")
       : `loudnorm=I=${_t.I}:TP=${_t.TP}:LRA=${_t.LRA}`;
 
+    // When the intro sting is active, mute speech for the blackout window so
+    // the avatar's voice is NOT heard while the logo screen is showing.
+    // At t=blackoutFadeEnd the blackout is gone and the avatar is visible —
+    // so both visual and audio start together (lip-sync is preserved because
+    // the avatar mouth has been moving under the blackout at the same pts).
+    const introMute = introState.active
+      ? `,volume=0.0:enable='lte(t\\,${introState.blackoutFadeEnd.toFixed(3)})'`
+      : "";
     const speechChain = isElSpeech
-      ? `aformat=fltp:48000:stereo,${loudnormFilter}`
-      : `aformat=fltp:44100:stereo,${loudnormFilter},aecho=0.8:0.9:40:0.3`;
+      ? `aformat=fltp:48000:stereo${introMute},${loudnormFilter}`
+      : `aformat=fltp:44100:stereo${introMute},${loudnormFilter},aecho=0.8:0.9:40:0.3`;
 
     if (musicIdx >= 0) {
       if (realism) {
