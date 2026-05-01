@@ -111,12 +111,17 @@ export async function generateOutroCardAss(opts: OutroCardOptions): Promise<void
   const urlBaseY = cardY + Math.round(cardH * 0.68);
 
   const startTime = formatAssTime(startSec);
-  const endTime = formatAssTime(durationSec);
+  // End the card 0.5s before video end so it fully fades out before the
+  // video's own fade-to-black (at duration-0.4s). This prevents the card
+  // being visible on the frozen last frame in HTML5 players.
+  const cardEndSec = Math.max(startSec + 1.0, durationSec - 0.5);
+  const endTime = formatAssTime(cardEndSec);
 
-  const accentAss = toAssColor(accentColor);
-  const accentDarkAss = toAssColor(darkenHex(accentColor, 0.55));
   const whiteAss = "&H00FFFFFF";
-  const shadowDarkAss = "&H00101820";
+  const darkTextAss = "&H00141414";
+  const urlTextAss = "&H00333333";
+  const cardBorderAss = toAssColor(darkenHex(accentColor, 0.25));
+  const transparentAss = "&H00000000";
 
   const bgFadeIn = 350;
   const bgFadeOut = 200;
@@ -124,7 +129,7 @@ export async function generateOutroCardAss(opts: OutroCardOptions): Promise<void
   const headFadeOut = 200;
   const urlFadeIn = 550;
   const urlFadeOut = 200;
-  const slidePx = 28;
+  const slidePx = 22;
 
   const escHeadline = escapeAssText(headline);
   const escUrl = url ? escapeAssText(url) : "";
@@ -138,9 +143,9 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: OutroBg,Arial,1,${accentAss},${whiteAss},${accentDarkAss},${shadowDarkAss},0,0,0,0,100,100,0,0,1,3,8,7,0,0,0,1
-Style: OutroHead,Arial,${headFontSize},${whiteAss},${whiteAss},${shadowDarkAss},${shadowDarkAss},-1,0,0,0,100,100,1,0,1,3,4,5,0,0,0,1
-Style: OutroUrl,Arial,${urlFontSize},${whiteAss},${whiteAss},${shadowDarkAss},${shadowDarkAss},0,0,0,0,100,100,2,0,1,2,3,5,0,0,0,1
+Style: OutroBg,Liberation Sans,1,${whiteAss},${whiteAss},${cardBorderAss},${transparentAss},0,0,0,0,100,100,0,0,1,2,0,7,0,0,0,1
+Style: OutroHead,Liberation Sans,${headFontSize},${darkTextAss},${darkTextAss},${transparentAss},${transparentAss},-1,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+Style: OutroUrl,Liberation Sans,${urlFontSize},${urlTextAss},${urlTextAss},${transparentAss},${transparentAss},0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
