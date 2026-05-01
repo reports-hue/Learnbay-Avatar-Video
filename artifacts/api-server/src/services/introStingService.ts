@@ -69,7 +69,13 @@ const INACTIVE: IntroState = {
 
 /**
  * Compute the intro sting state. Active only when a logo is present AND the
- * total video is long enough that the 1.6s sting won't dominate.
+ * total video is long enough that the sting won't dominate.
+ *
+ * Timing rationale (shortened from 1.6 s → 1.0 s):
+ *   The previous 1.6 s sting used `volume=0` for its full duration, causing
+ *   the first ~3-4 words of the script to be permanently silenced.
+ *   The new 1.0 s sting loses ≤ 2 words and has a smooth 100 ms audio
+ *   ramp-in at the transition (see ffmpegService introMuteRamp).
  */
 export function computeIntroState(durationSec: number, hasLogo: boolean): IntroState {
   if (!hasLogo || !Number.isFinite(durationSec) || durationSec < 4) {
@@ -77,16 +83,16 @@ export function computeIntroState(durationSec: number, hasLogo: boolean): IntroS
   }
   return {
     active: true,
-    largeLogoFadeInEnd: 0.4,
-    largeLogoFadeOutStart: 1.0,
-    largeLogoFadeOutEnd: 1.4,
+    largeLogoFadeInEnd: 0.25,    // logo fully visible at 0.25s (was 0.4)
+    largeLogoFadeOutStart: 0.55, // logo starts fading at 0.55s (was 1.0)
+    largeLogoFadeOutEnd: 0.80,   // logo gone at 0.80s (was 1.4)
     largeLogoScale: 1.6,
-    blackoutFadeStart: 1.3,
-    blackoutFadeEnd: 1.6,
-    cornerLogoFadeInStart: 1.3,
-    cornerLogoFadeInEnd: 1.6,
-    swooshStart: 1.3,
-    swooshEnd: 1.6,
+    blackoutFadeStart: 0.65,     // white screen starts dissolving at 0.65s (was 1.3)
+    blackoutFadeEnd: 1.00,       // avatar fully revealed at 1.00s (was 1.6)
+    cornerLogoFadeInStart: 0.65, // corner chip starts appearing at 0.65s (was 1.3)
+    cornerLogoFadeInEnd: 1.00,   // corner chip fully visible at 1.00s (was 1.6)
+    swooshStart: 0.65,           // accent swoosh at 0.65–1.00s (was 1.3–1.6)
+    swooshEnd: 1.00,
     swooshWidthFrac: 0.30,
   };
 }

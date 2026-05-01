@@ -1681,13 +1681,22 @@ export async function postProcessAvatarVideo(
         ].join(":")
       : `loudnorm=I=${_t.I}:TP=${_t.TP}:LRA=${_t.LRA}`;
 
-    // When the intro sting is active, mute speech for the blackout window so
-    // the avatar's voice is NOT heard while the logo screen is showing.
-    // At t=blackoutFadeEnd the blackout is gone and the avatar is visible —
-    // so both visual and audio start together (lip-sync is preserved because
-    // the avatar mouth has been moving under the blackout at the same pts).
+    // When the intro sting is active, silence speech during the logo screen and
+    // then ramp audio smoothly into full volume over the last 100 ms of the
+    // blackout so there is no audible click/pop at the transition.
+    //
+    // Chain:  volume=0  (enable while t < rampStart)
+    //         afade=in  (0 → 1 over 100 ms starting at rampStart)
+    //
+    // The volume=0 zeros the signal before rampStart. The afade then applies a
+    // 0→1 gain ramp starting at rampStart (before rampStart the signal is 0,
+    // so the pre-ramp afade output is also 0 — correct). Result: clean silence
+    // until 100 ms before the avatar appears, then a smooth ramp to full volume.
+    const rampStart = introState.active
+      ? (introState.blackoutFadeEnd - 0.1).toFixed(3)
+      : "0";
     const introMute = introState.active
-      ? `,volume=0.0:enable='lte(t\\,${introState.blackoutFadeEnd.toFixed(3)})'`
+      ? `,volume=0.0:enable='lt(t\\,${rampStart})',afade=t=in:st=${rampStart}:d=0.100`
       : "";
     const speechChain = isElSpeech
       ? `aformat=fltp:48000:stereo${introMute},${loudnormFilter}`

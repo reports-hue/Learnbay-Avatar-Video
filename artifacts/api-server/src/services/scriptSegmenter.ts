@@ -75,6 +75,60 @@ export const SegmenterPlanSchema = z.object({
 });
 export type SegmenterPlan = z.infer<typeof SegmenterPlanSchema>;
 
+// ── Stat-popin validation ──
+
+/**
+ * Extract the leading numeric value from a word or stat string.
+ * Handles: "80%", "$80", "80x", "80K", "80M", "80 million", "80,000", "80".
+ * Returns null when no number is found.
+ */
+function extractNumericValue(text: string): number | null {
+  // Strip currency prefix and trailing non-digit suffix, then parse first number.
+  const cleaned = text.trim().replace(/,/g, "");
+  const match = cleaned.match(/(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const n = parseFloat(match[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Drop any stat-popin segment whose emphasisText numeric value cannot be
+ * found in the word timings within a ±2 s window around the segment.
+ * This is a hard server-side guard against LLM hallucinations — the prompt
+ * already asks the model to match real numeric words, but we enforce it here.
+ */
+export function validateStatPopins(segments: Segment[], wordTimings: WordTiming[]): Segment[] {
+  return segments.filter((seg) => {
+    if (seg.mode !== "stat-popin") return true;
+    if (!seg.emphasisText) {
+      logger.warn({ start: seg.startSec }, "Stat-popin dropped: emphasisText is null");
+      return false;
+    }
+    const emphasisNum = extractNumericValue(seg.emphasisText);
+    if (emphasisNum === null) {
+      logger.warn(
+        { emphasisText: seg.emphasisText, start: seg.startSec },
+        "Stat-popin dropped: emphasisText has no numeric value"
+      );
+      return false;
+    }
+    const windowStart = seg.startSec - 2.0;
+    const windowEnd = seg.endSec + 2.0;
+    const found = wordTimings.some((w) => {
+      if (w.startSec < windowStart || w.startSec > windowEnd) return false;
+      const wordNum = extractNumericValue(w.word);
+      return wordNum !== null && Math.abs(wordNum - emphasisNum) < 0.001;
+    });
+    if (!found) {
+      logger.warn(
+        { emphasisText: seg.emphasisText, emphasisNum, start: seg.startSec, end: seg.endSec },
+        "Stat-popin dropped: numeric value not found in word timings window"
+      );
+    }
+    return found;
+  });
+}
+
 // ── Budget enforcement ──
 
 interface BudgetOptions {
@@ -171,7 +225,8 @@ function cacheKey(input: {
   h.update("|");
   h.update(input.duration.toFixed(2));
   // Bump this when prompt or schema changes meaningfully so old caches are invalidated.
-  h.update("|v1");
+  // v2: added server-side stat-popin numeric validation + shortened intro lockout to 1.0s.
+  h.update("|v2");
   return h.digest("hex");
 }
 
@@ -250,7 +305,7 @@ Each entry MUST include:
 - "emphasisText": the exact word(s) being emphasized (for stat-popin only). Set to null for broll-* modes.
 
 CRITICAL RULES:
-- Never place a segment in the FIRST 1.6 seconds (intro sting blackout).
+- Never place a segment in the FIRST 1.0 seconds (intro sting blackout).
 - Never place a segment in the LAST 2.5 seconds (outro CTA card).
 - Stat-popin MUST coincide with a numeric word actually present in the script.
 - Broll-pip segments should be 1.5-3s long; broll-fullscreen 2-4s; stat-popin 0.6-1.2s.
@@ -340,15 +395,22 @@ export async function segmentScript(opts: SegmentScriptOptions): Promise<Segment
   }
 
   // Enforce budgets in code
-  const filtered = enforceBudget(parsed.segments, { durationSec: duration });
-  const finalPlan: SegmenterPlan = { segments: filtered };
+  const budgeted = enforceBudget(parsed.segments, { durationSec: duration });
+
+  // Server-side guard: drop stat-popins whose emphasisText number does not
+  // appear in word timings — prevents hallucinated stats from reaching the renderer.
+  const validated = validateStatPopins(budgeted, wordTimings);
+  const finalPlan: SegmenterPlan = { segments: validated };
 
   logger.info(
     {
       cacheKey: key,
       llmSegmentCount: parsed.segments.length,
-      finalSegmentCount: filtered.length,
-      modes: filtered.map((s) => s.mode),
+      budgetedCount: budgeted.length,
+      finalSegmentCount: validated.length,
+      droppedStatPopins: budgeted.filter((s) => s.mode === "stat-popin").length
+        - validated.filter((s) => s.mode === "stat-popin").length,
+      modes: validated.map((s) => s.mode),
     },
     "Script segmenter: plan generated"
   );
