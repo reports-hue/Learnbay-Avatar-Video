@@ -73,6 +73,7 @@ export interface JobResult {
   thumbnailUrl: string | null;
   script: string;
   brandTheme: { bgColor1: string; bgColor2: string; accentColor: string };
+  cta?: string;
 }
 
 export interface JobState {
@@ -415,7 +416,6 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       gradientColor2: resolvedBgColor2,
       backgroundStyle: brandThemeResult?.backgroundStyle,
       bgImagePath: aiBgImagePath,
-      cta: cta || undefined,
       wordTimings: wordTimings.length > 0 ? wordTimings : undefined,
       captionStyle,
       outputFilename,
@@ -450,6 +450,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
         bgColor2: resolvedBgColor2 ?? resolvedBgColor1,
         accentColor: resolvedAccent,
       },
+      cta: cta || undefined,
     };
 
     updateJob(jobId, { status: "done", step: "done", percent: 100, message: "Your video is ready!", result });

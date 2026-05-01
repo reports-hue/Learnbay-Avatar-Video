@@ -41,7 +41,22 @@ const SERVER_EL_KEY_SENTINEL = "__server__";
 interface BrandTheme { bgColor1: string; bgColor2: string; accentColor: string }
 interface GenerationResult {
   videoId: string; videoUrl: string; thumbnailUrl?: string;
-  script: string; brandTheme: BrandTheme;
+  script: string; brandTheme: BrandTheme; cta?: string; logoUrl?: string;
+}
+
+const URL_REGEX_CTA =
+  /\b((?:https?:\/\/|www\.)[^\s]+|[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:com|io|co|app|ai|net|org|dev|me|tv|xyz|so|gg|sh)(?:\/[^\s]*)?)/i;
+
+function parseCta(cta: string): { headline: string; url: string | null } {
+  const trimmed = cta.trim();
+  if (!trimmed) return { headline: "", url: null };
+  const m = trimmed.match(URL_REGEX_CTA);
+  if (!m) return { headline: trimmed, url: null };
+  const url = m[0];
+  const before = trimmed.slice(0, m.index ?? 0).trim();
+  const after = trimmed.slice((m.index ?? 0) + url.length).trim();
+  const headline = (before + " " + after).trim().replace(/[\s|·,;:-]+$/g, "").trim();
+  return { headline: headline || "Visit us", url };
 }
 
 const STEPS = [
@@ -436,6 +451,8 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const [liveScript, setLiveScript] = useState<string | null>(null);
   const [result, setResult] = useState<GenerationResult | null>(null);
+  const [resultEnded, setResultEnded] = useState(false);
+  const resultVideoRef = useRef<HTMLVideoElement>(null);
   const [genError, setGenError] = useState<string | null>(null);
   const [resumedJob, setResumedJob] = useState(false);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -498,7 +515,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
         const job = await resp.json() as {
           status: string; step: string; percent: number; message: string;
           script?: string; error?: string;
-          result?: { videoId: string; videoUrl: string; thumbnailUrl: string | null; script: string; brandTheme: BrandTheme };
+          result?: { videoId: string; videoUrl: string; thumbnailUrl: string | null; script: string; brandTheme: BrandTheme; cta?: string };
         };
 
         setProgress({ step: job.step, percent: job.percent, message: job.message });
@@ -513,6 +530,8 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             thumbnailUrl: job.result.thumbnailUrl ? job.result.thumbnailUrl + "?t=" + Date.now() : undefined,
             script: job.result.script,
             brandTheme: job.result.brandTheme,
+            cta: job.result.cta || undefined,
+            logoUrl: customLogoUrl || brand.logoUrl || undefined,
           };
           // Save to library FIRST (synchronous write) before any React
           // state updates that could trigger a crashing render.
@@ -529,6 +548,8 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
             script: r.script,
             brandTheme: r.brandTheme,
             createdAt: new Date().toISOString(),
+            cta: job.result.cta || undefined,
+            logoUrl: customLogoUrl || brand.logoUrl || undefined,
           });
           setResult(r);
           setLiveScript(r.script);
@@ -1567,7 +1588,43 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                 </div>
               )}
 
-              <video src={result.videoUrl} controls playsInline className="w-full rounded-lg bg-black" />
+              <div className="relative w-full rounded-lg overflow-hidden bg-black">
+                <video
+                  ref={resultVideoRef}
+                  src={result.videoUrl}
+                  controls={!resultEnded}
+                  playsInline
+                  className="w-full"
+                  onEnded={() => setResultEnded(true)}
+                  onPlay={() => setResultEnded(false)}
+                />
+                {resultEnded && result.cta && (() => {
+                  const p = parseCta(result.cta);
+                  return (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-white">
+                      {result.logoUrl && (
+                        <img src={result.logoUrl} alt="" className="h-16 w-auto max-w-[200px] object-contain mb-6" />
+                      )}
+                      <p className="text-2xl font-bold text-gray-900 text-center px-6"
+                        style={{ fontFamily: "Arial, 'Liberation Sans', sans-serif" }}>
+                        {p.headline}
+                      </p>
+                      {p.url && (
+                        <p className="mt-3 text-base text-gray-500 text-center px-6"
+                          style={{ fontFamily: "Arial, 'Liberation Sans', sans-serif" }}>
+                          {p.url}
+                        </p>
+                      )}
+                      <button
+                        onClick={() => { setResultEnded(false); if (resultVideoRef.current) { resultVideoRef.current.currentTime = 0; resultVideoRef.current.play(); } }}
+                        className="mt-8 flex items-center gap-2 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Replay
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
 
               <div className="flex gap-2">
                 <a href={result.videoUrl} download="libraryminds-video.mp4" className="flex-1">

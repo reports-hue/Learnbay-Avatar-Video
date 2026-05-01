@@ -51,6 +51,8 @@ export interface VideoEntry {
   script: string;
   brandTheme: { bgColor1: string; bgColor2: string; accentColor: string };
   createdAt: string;
+  cta?: string;
+  logoUrl?: string;
 }
 
 export interface BrandAnalysisResult {
