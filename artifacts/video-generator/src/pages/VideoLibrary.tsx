@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -51,11 +51,17 @@ export function VideoLibrary({ library, addVideo, removeVideo, setPage }: Props)
     try { localStorage.setItem(TOMBSTONE_KEY, JSON.stringify([...t])); } catch { /* quota / private mode — best effort */ }
   }
 
-  // NOTE: There is intentionally no auto-recover effect here. Previously this
-  // component fetched /api/videos on every mount and re-added anything missing
-  // from the local library, which caused deleted videos to silently reappear
-  // after the user generated a new video (Library remounts → effect re-runs).
-  // Recovery is now strictly opt-in via the manual "Recover" button below.
+  // Auto-recover on mount ONLY when the local library is completely empty AND
+  // there are no tombstones. Both conditions together signal a fresh browser
+  // session (localStorage was reset), not a user who deliberately deleted all
+  // their videos. This prevents deleted videos from silently reappearing.
+  useEffect(() => {
+    const isCompletelyFresh = library.length === 0 && readTombstones().size === 0;
+    if (isCompletelyFresh) {
+      recoverVideos();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function recoverVideos() {
     setRecovering(true);
