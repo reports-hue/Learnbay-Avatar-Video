@@ -20,7 +20,6 @@ import {
   computeIntroState,
   buildLargeLogoFilters,
   buildBlackoutFilter,
-  buildSwooshFilter,
   buildCornerLogoFadeIn,
   brandColorToFfmpeg,
 } from "./introStingService.js";
@@ -424,7 +423,12 @@ async function generateAnimatedCaptionsAss(
   const activeFontSize = isVertical ? 58 : 46;
   const captionY = h - lowerH - (isVertical ? 160 : 120);
   const accentAss = toAssColor(accentColor);
-  const WINDOW = 3; // max 3 words at a time
+
+  // Stable-chunk karaoke: group words into CHUNK-word blocks that stay
+  // on screen for the entire group duration. Only the ACTIVE word changes
+  // colour. Previous approach used a sliding window (each word appeared
+  // up to 3× as context), which users experienced as repetitive scrolling.
+  const CHUNK = 3;
 
   const header = `[Script Info]
 ScriptType: v4.00+
@@ -441,34 +445,38 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
   const events: string[] = [];
-
-  // Spec: 50 ms gap between consecutive caption events to prevent visible run-together
   const GAP_SEC = 0.05;
 
-  for (let i = 0; i < wordTimings.length; i++) {
-    const wt = wordTimings[i];
-    const nextWt = wordTimings[i + 1];
-    const startSec = Math.max(0, wt.startSec);
-    const startTime = formatAssTime(startSec);
-    const rawEndSec = nextWt
-      ? nextWt.startSec - GAP_SEC
-      : wt.startSec + wt.durationSec + 0.25;
-    // Never let end <= start (can happen if two boundaries are <50ms apart)
-    const endSec = Math.max(startSec + 0.04, rawEndSec);
-    const endTime = formatAssTime(endSec);
+  for (let chunkStart = 0; chunkStart < wordTimings.length; chunkStart += CHUNK) {
+    const chunk = wordTimings.slice(chunkStart, chunkStart + CHUNK);
+    if (chunk.length === 0) continue;
 
-    const windowStart = Math.max(0, i - (WINDOW - 1));
-    const windowWords = wordTimings.slice(windowStart, i + 1);
+    // Determine end of the entire chunk block.
+    const nextChunkFirstWord = wordTimings[chunkStart + CHUNK];
+    const chunkEndSec = nextChunkFirstWord
+      ? nextChunkFirstWord.startSec - GAP_SEC
+      : chunk[chunk.length - 1].startSec + chunk[chunk.length - 1].durationSec + 0.25;
 
-    const line = windowWords.map((w2, idx) => {
-      const isActive = windowStart + idx === i;
-      if (isActive) {
-        return `{\\c${accentAss}&\\b1\\fs${activeFontSize}\\shad1}${w2.word}{\\c&H00FFFFFF&\\b0\\fs${baseFontSize}\\shad0}`;
-      }
-      return `{\\c&H00FFFFFF&\\b0\\fs${baseFontSize}}${w2.word}`;
-    }).join(" ");
+    // Emit one Dialogue per word in the chunk. Each event covers from that
+    // word's start to the next word's start (or the chunk end for the last
+    // word). The FULL chunk is shown every time; only the active word is
+    // accented. This means each word appears EXACTLY ONCE — no repetition.
+    for (let j = 0; j < chunk.length; j++) {
+      const wordStart = Math.max(0, chunk[j].startSec);
+      const wordEndRaw = j + 1 < chunk.length
+        ? chunk[j + 1].startSec - GAP_SEC
+        : chunkEndSec;
+      const wordEnd = Math.max(wordStart + 0.04, wordEndRaw);
 
-    events.push(`Dialogue: 0,${startTime},${endTime},Cap,,0,0,0,,${line}`);
+      const line = chunk.map((cw, idx) => {
+        if (idx === j) {
+          return `{\\c${accentAss}&\\b1\\fs${activeFontSize}\\shad1}${cw.word}{\\c&H00FFFFFF&\\b0\\fs${baseFontSize}\\shad0}`;
+        }
+        return `{\\c&H00FFFFFF&\\b0\\fs${baseFontSize}}${cw.word}`;
+      }).join(" ");
+
+      events.push(`Dialogue: 0,${formatAssTime(wordStart)},${formatAssTime(wordEnd)},Cap,,0,0,0,,${line}`);
+    }
   }
 
   await fs.writeFile(outputPath, header + events.join("\n") + "\n", "utf8");
@@ -1159,25 +1167,17 @@ export async function postProcessAvatarVideo(
       brollInputIndices.push(inputIndex++);
     }
 
-    // Intro sting inputs (T104): when active, add two `color` inputs —
-    //   blackoutIdx: full-frame black plate that holds opaque for 0-1.3s
-    //                then fades out 1.3-1.6s
-    //   swooshIdx:   brand-accent vertical strip (30% × outW) that slides
-    //                left→right across the frame between 1.3s and 1.6s
-    // Both are only added when the sting is active so input indices stay
-    // packed and the rest of the graph is unchanged for short videos / no logo.
+    // Intro sting inputs (T104): when active, add one `color` input —
+    //   blackoutIdx: full-frame white plate that fades out over the transition
+    //                window (0→blackoutFadeStart fully opaque, then dissolves).
+    // Swoosh (accent strip) removed: user testing showed the sweeping bar was
+    // confusing and looked like a render artefact. The logo + blackout fade is
+    // sufficient visual interest for the intro sting.
     let blackoutIdx = -1;
-    let swooshIdx = -1;
     if (introState.active) {
-      const swooshW = Math.max(1, Math.round(outW * introState.swooshWidthFrac));
-      const accentFf = brandColorToFfmpeg(accentColor);
-      // Just enough duration to cover the sting window — `loop` extends it via
-      // the overlay's enable= window without consuming extra frames.
-      const stingDur = Math.max(introState.blackoutFadeEnd, introState.swooshEnd) + 0.1;
+      const stingDur = introState.blackoutFadeEnd + 0.1;
       cmd = cmd.input(`color=c=white:s=${outW}x${outH}:r=30:d=${stingDur.toFixed(3)}`).inputOptions(["-f lavfi"]);
       blackoutIdx = inputIndex++;
-      cmd = cmd.input(`color=c=${accentFf}:s=${swooshW}x${outH}:r=30:d=${stingDur.toFixed(3)}`).inputOptions(["-f lavfi"]);
-      swooshIdx = inputIndex++;
     }
 
     // Speech audio source: prefer ElevenLabs MP3 when supplied, else use Azure TTS from the avatar video
@@ -1596,16 +1596,11 @@ export async function postProcessAvatarVideo(
     }
 
     // ── 10c. Intro sting (T104) ──
-    // Order matters: the BLACKOUT goes down first (covers everything from
-    // 0-1.3s, fades 1.3-1.6s), then the LARGE LOGO sits on top of the black
-    // (centered, fades in 0-0.4s, fades out 1.0-1.4s), then the SWOOSH strip
-    // sweeps left→right at 1.3-1.6s on top of the fading black. The corner
-    // logo (already on lastV from step 7) is also fading in at 1.3-1.6s, so
-    // by t=1.6s the blackout is gone, the swoosh is off-screen, the centered
-    // logo is gone, and only the corner logo remains — visible on the live
-    // video. When introState is inactive, all three helpers return [] and
-    // the chain is unchanged.
-    if (introState.active && logoIdx >= 0 && blackoutIdx >= 0 && swooshIdx >= 0) {
+    // Order: BLACKOUT covers everything first (fades out at blackoutFadeEnd),
+    // then the LARGE LOGO sits centred on top of the blackout (fades in/out
+    // within the blackout window). When introState is inactive, all helpers
+    // return [] and the chain is unchanged.
+    if (introState.active && logoIdx >= 0 && blackoutIdx >= 0) {
       const blackoutFilters = buildBlackoutFilter(introState, blackoutIdx, lastV, "with_blackout");
       fp.push(...blackoutFilters);
       lastV = "with_blackout";
@@ -1622,9 +1617,7 @@ export async function postProcessAvatarVideo(
       fp.push(...largeLogoFilters);
       lastV = "with_large_logo";
 
-      const swooshFilters = buildSwooshFilter(introState, swooshIdx, outW, lastV, "with_swoosh");
-      fp.push(...swooshFilters);
-      lastV = "with_swoosh";
+      // Swoosh removed — no longer applied to lastV.
     }
 
     // ── 11. Film grain (after all overlays, for organic texture) ──
@@ -1681,21 +1674,22 @@ export async function postProcessAvatarVideo(
         ].join(":")
       : `loudnorm=I=${_t.I}:TP=${_t.TP}:LRA=${_t.LRA}`;
 
-    // When the intro sting is active, silence speech during the logo screen and
-    // then ramp audio smoothly into full volume over the last 100 ms of the
-    // blackout so there is no audible click/pop at the transition.
+    // When the intro sting is active AND using Azure TTS, silence speech during
+    // the logo screen and ramp audio smoothly into full volume over the last
+    // 100 ms of the blackout so there is no audible click/pop at the transition.
     //
-    // Chain:  volume=0  (enable while t < rampStart)
-    //         afade=in  (0 → 1 over 100 ms starting at rampStart)
+    // For ElevenLabs (isElSpeech=true): the route handler already prepends
+    // INTRO_BREAK_SEC seconds of silence to the EL audio file and shifts all
+    // word timings by the same duration. The audio is therefore naturally silent
+    // during the intro window — no additional mute filter needed.
     //
-    // The volume=0 zeros the signal before rampStart. The afade then applies a
-    // 0→1 gain ramp starting at rampStart (before rampStart the signal is 0,
-    // so the pre-ramp afade output is also 0 — correct). Result: clean silence
-    // until 100 ms before the avatar appears, then a smooth ramp to full volume.
+    // For Azure TTS (isElSpeech=false): the avatar SSML has a leading <break>
+    // of the same duration, but the audio is still continuous. The mute + ramp
+    // prevents any residual audio from leaking through the blackout.
     const rampStart = introState.active
       ? (introState.blackoutFadeEnd - 0.1).toFixed(3)
       : "0";
-    const introMute = introState.active
+    const introMute = introState.active && !isElSpeech
       ? `,volume=0.0:enable='lt(t\\,${rampStart})',afade=t=in:st=${rampStart}:d=0.100`
       : "";
     const speechChain = isElSpeech

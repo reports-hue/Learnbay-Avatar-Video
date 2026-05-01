@@ -42,11 +42,15 @@ function buildSentenceXml(script: string): string {
 }
 
 // Build SSML for word-timing synthesis (matches the pacing in the avatar video)
-function buildTimingSsml(script: string, voiceName: string, pacingRate = "0.95"): string {
+function buildTimingSsml(script: string, voiceName: string, pacingRate = "0.95", leadingBreakMs = 0): string {
   const useChat = CHAT_STYLE_VOICES.has(voiceName);
   const sentenceXml = buildSentenceXml(script);
 
-  const prosodyWrapper = `<prosody rate="${pacingRate}" pitch="-1%">${sentenceXml}</prosody>`;
+  // Optional leading break: mirrors the break added to the avatar SSML so the
+  // word-boundary audioOffset values are shifted by the same duration.
+  const breakTag = leadingBreakMs > 0 ? `<break time="${leadingBreakMs}ms"/>` : "";
+
+  const prosodyWrapper = `<prosody rate="${pacingRate}" pitch="-1%">${breakTag}${sentenceXml}</prosody>`;
 
   const inner = useChat
     ? `<mstts:express-as style="chat" styledegree="1.1">${prosodyWrapper}</mstts:express-as>`
@@ -58,7 +62,8 @@ function buildTimingSsml(script: string, voiceName: string, pacingRate = "0.95")
 export async function getWordTimings(
   script: string,
   voiceName: string,
-  pacingRate = "0.95"
+  pacingRate = "0.95",
+  leadingBreakMs = 0
 ): Promise<WordTiming[]> {
   const key = process.env.AZURE_SPEECH_KEY ?? "";
   const region = process.env.AZURE_SPEECH_REGION ?? "eastus";
@@ -95,7 +100,7 @@ export async function getWordTimings(
     "Getting word timings via Azure Speech SDK wordBoundary events"
   );
 
-  const ssml = buildTimingSsml(script, voiceName, pacingRate);
+  const ssml = buildTimingSsml(script, voiceName, pacingRate, leadingBreakMs);
 
   return new Promise((resolve, reject) => {
     synthesizer.speakSsmlAsync(

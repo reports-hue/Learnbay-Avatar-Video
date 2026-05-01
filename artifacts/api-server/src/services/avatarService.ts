@@ -34,6 +34,10 @@ export interface AvatarJobConfig {
   // NOT support alpha. Cannot be combined with bgImageUrl (Azure would composite
   // the image and there would be nothing to be transparent over).
   useTransparent?: boolean;
+  // When set, prepends a SSML <break> of this many seconds before the script.
+  // Used to add intro-sting dead time so the avatar sits idle during the logo
+  // reveal instead of mouthing words behind the blackout.
+  leadingBreakSec?: number;
 }
 
 // Supported SSML speaking styles per Azure TTS voice
@@ -85,13 +89,20 @@ function buildSsml(
   script: string,
   voice: string,
   voiceStyle?: string,
-  pacing: PacingRate = "natural"
+  pacing: PacingRate = "natural",
+  leadingBreakSec = 0
 ): string {
   const rate = PACING_VALUES[pacing];
   const lang = extractLocale(voice);
   const sentences = splitSentences(script);
   const styles = VOICE_STYLES[voice] ?? [];
   const effectiveStyle = voiceStyle && styles.includes(voiceStyle) ? voiceStyle : (styles.includes("chat") ? "chat" : null);
+
+  // Optional leading break: avatar sits idle during the intro logo reveal so
+  // its mouth does not move while the blackout is covering the frame.
+  const breakTag = leadingBreakSec > 0
+    ? `<break time="${Math.round(leadingBreakSec * 1000)}ms"/>`
+    : "";
 
   // Build sentence-level content — NO explicit breaks between sentences.
   // Rely on the TTS engine's natural sentence rhythm + short boundary silence.
@@ -105,7 +116,7 @@ function buildSsml(
     .join(" ");
 
   // Wrap all in one parent prosody block with minimal sentence boundary silence
-  const prosodyContent = `<prosody pitch="-2%"><mstts:silence type="Sentenceboundary" value="80ms"/>${sentenceXml}</prosody>`;
+  const prosodyContent = `<prosody pitch="-2%"><mstts:silence type="Sentenceboundary" value="80ms"/>${breakTag}${sentenceXml}</prosody>`;
 
   // Only add express-as if voice supports it (mainly English Neural voices)
   const supportsStyle = styles.length > 0;
@@ -170,7 +181,7 @@ export async function generateAvatarVideo(config: AvatarJobConfig): Promise<stri
   // We always use SSML/Azure TTS for the avatar render — see comment above.
   // If `config.audioUrl` is set, the caller (route handler) is responsible for
   // swapping that audio into the final video during FFmpeg post-processing.
-  const ssml = buildSsml(config.script, config.voice, config.voiceStyle, config.pacing ?? "natural");
+  const ssml = buildSsml(config.script, config.voice, config.voiceStyle, config.pacing ?? "natural", config.leadingBreakSec ?? 0);
   const requestBody = {
     synthesisConfig: { voice: config.voice },
     customVoices: {},

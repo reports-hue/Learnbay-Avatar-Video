@@ -52,6 +52,14 @@ export interface IntroState {
   swooshWidthFrac: number;
 }
 
+/**
+ * Duration of the leading silence/break injected at the START of both the
+ * avatar SSML and the ElevenLabs audio whenever the intro sting is active.
+ * Must equal `computeIntroState().blackoutFadeEnd` so speech and captions
+ * align perfectly with the moment the blackout lifts.
+ */
+export const INTRO_BREAK_SEC = 1.0;
+
 const INACTIVE: IntroState = {
   active: false,
   largeLogoFadeInEnd: 0,

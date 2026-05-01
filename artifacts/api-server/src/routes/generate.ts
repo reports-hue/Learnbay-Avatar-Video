@@ -2,6 +2,8 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync, readdirSync, statSync, unlinkSync } from "fs";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
 import { logger } from "../lib/logger.js";
@@ -13,7 +15,27 @@ import { getWordTimings } from "../services/speech.js";
 import { synthesizeElevenLabs } from "../services/elevenLabsService.js";
 import { segmentScript } from "../services/scriptSegmenter.js";
 import { fetchBrollResources, writeBrollAuditTrail } from "../services/brollEngine.js";
+import { INTRO_BREAK_SEC } from "../services/introStingService.js";
 import ffmpeg from "fluent-ffmpeg";
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Prepend `durationSec` seconds of silence to an audio file.
+ * Produces a new MP3 at `outputPath`. Used so ElevenLabs speech
+ * starts AFTER the intro logo reveal instead of being muted.
+ */
+async function prependSilenceToElAudio(inputPath: string, outputPath: string, durationSec: number): Promise<void> {
+  await execFileAsync("ffmpeg", [
+    "-y",
+    "-f", "lavfi", "-t", String(durationSec), "-i", "anullsrc=r=44100:cl=stereo",
+    "-i", inputPath,
+    "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[aout]",
+    "-map", "[aout]",
+    "-c:a", "libmp3lame", "-b:a", "192k",
+    outputPath,
+  ]);
+}
 
 /**
  * Probe a media file's duration in seconds. Returns 0 on any error so
@@ -223,6 +245,17 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
 
     updateJob(jobId, { step: "script_done", percent: 18, message: "Script ready. Getting word timings…", script });
 
+    // ── Intro-sting leading break ──
+    // When a logo is present the intro sting shows for INTRO_BREAK_SEC seconds.
+    // To prevent the avatar from mouthing words behind the blackout (and the
+    // ElevenLabs audio from playing silently while muted), we insert a leading
+    // gap equal to INTRO_BREAK_SEC into BOTH the avatar SSML and the EL audio.
+    // This pushes all speech — and therefore all word-timing events — INTRO_BREAK_SEC
+    // seconds later in the timeline, aligning perfectly with the moment the
+    // blackout lifts and the avatar becomes visible.
+    const introDurationSec = logoUrl ? INTRO_BREAK_SEC : 0;
+    const introBreakMs = Math.round(introDurationSec * 1000);
+
     // ── Step 2: Word timings / ElevenLabs TTS ──
     const pacingRate = PACING_SSML_RATE[pacing] ?? "0.95";
     let wordTimings: import("../services/speech.js").WordTiming[] = [];
@@ -233,20 +266,35 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       if (!elApiKey) throw new Error("ElevenLabs API key is required. Add it in Voice Settings.");
       updateJob(jobId, { step: "elevenlabs", percent: 20, message: "Synthesizing voice with ElevenLabs…" });
       const elResult = await synthesizeElevenLabs(script, elVoiceId, elApiKey);
-      elAudioPath = path.join(outputsDir, elResult.filename);
+      const rawElAudioPath = path.join(outputsDir, elResult.filename);
       const publicDomain = process.env.REPLIT_DEV_DOMAIN || process.env.PUBLIC_URL;
       if (!publicDomain) throw new Error("Cannot determine public URL for ElevenLabs audio. Set REPLIT_DEV_DOMAIN or PUBLIC_URL.");
-      elAudioUrl = `https://${publicDomain}/api/video/${elResult.filename}`;
+
+      // Prepend leading silence so EL speech starts after the intro sting.
+      if (introDurationSec > 0) {
+        const paddedFilename = `el_padded_${videoId}.mp3`;
+        const paddedPath = path.join(outputsDir, paddedFilename);
+        await prependSilenceToElAudio(rawElAudioPath, paddedPath, introDurationSec);
+        elAudioPath = paddedPath;
+        elAudioUrl = `https://${publicDomain}/api/video/${paddedFilename}`;
+      } else {
+        elAudioPath = rawElAudioPath;
+        elAudioUrl = `https://${publicDomain}/api/video/${elResult.filename}`;
+      }
+
+      // Shift word timings by the intro break so captions align with the padded audio.
       wordTimings = elResult.wordTimings.map(t => ({
         word: t.word,
-        startSec: t.start / 1000,
+        startSec: t.start / 1000 + introDurationSec,
         durationSec: (t.end - t.start) / 1000,
       }));
     } else if (captionStyle !== "none") {
       // Hard rule: never silently fall back to estimated timing. If the SDK
       // can't deliver real word-boundary events, fail the render with a clear
       // error rather than shipping mistimed captions.
-      wordTimings = await getWordTimings(script, voice, pacingRate);
+      // Pass introBreakMs so the timing SSML matches the avatar SSML break,
+      // causing word-boundary audioOffset values to be auto-shifted.
+      wordTimings = await getWordTimings(script, voice, pacingRate, introBreakMs);
     }
 
     updateJob(jobId, { step: "avatar_start", percent: 25, message: "Azure AI is rendering your avatar (2–5 min)…" });
@@ -284,6 +332,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       realism,
       audioUrl: elAudioUrl,
       useTransparent,
+      leadingBreakSec: introDurationSec > 0 ? introDurationSec : undefined,
     };
 
     const avatarVideoPath = await generateAvatarVideo(avatarConfig);
