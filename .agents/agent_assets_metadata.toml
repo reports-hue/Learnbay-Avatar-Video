@@ -48,3 +48,21 @@ id = "YFUqZ6fhabw5PeROwSZF_"
 uri = "file://attached_assets/diagnostic/audio/E_music_1_FIXED_lowpass.mp3"
 type = "audio"
 title = "E — Proposed fix preview: music_1 with lowpass=6000 (no high-freq percussion)"
+
+[[outputs]]
+id = "pCxoO40PMsyFswo77C60B"
+uri = "file://attached_assets/diagnostic/audio/G_OLD_music_chain.mp3"
+type = "audio"
+title = "G — OLD music chain (12% vol, no lowpass) — hear the typing percussion in the highs"
+
+[[outputs]]
+id = "LH2Mc-CvkWwm9CCwgS37e"
+uri = "file://attached_assets/diagnostic/audio/H_NEW_music_chain.mp3"
+type = "audio"
+title = "H — NEW music chain (15% vol, lowpass=6000) — typing gone, music body intact"
+
+[[outputs]]
+id = "lW8pgSXOR5JFDutTlJYsE"
+uri = "file://attached_assets/diagnostic/audio/I_NEW_FULL_MIX_preview.mp3"
+type = "audio"
+title = "I — NEW full mix preview: speech + new music + sidechain duck (exactly what next render will sound like)"
