@@ -898,15 +898,16 @@ export async function postProcessAvatarVideo(
   const logoAspect = logoDims && logoDims.height > 0 ? logoDims.width / logoDims.height : 1.0;
 
   // ── Resolve music ──
-  // Auto-select one of the two built-in tracks. The caller may override by
-  // passing options.musicPath explicitly. If neither built-in track exists the
-  // video is generated without background music (graceful degradation).
-  const builtinTracks = ["music_1.mp3", "music_2.mp3"]
-    .map((f) => path.join(assetsDir, f))
-    .filter(existsSync);
-  const builtinMusic = builtinTracks.length > 0
-    ? builtinTracks[Math.floor(Math.random() * builtinTracks.length)]!
-    : null;
+  // Single built-in track per user-locked spec: every video uses music_1.mp3
+  // for predictable, consistent output. music_2.mp3 was retired here (file
+  // stays on disk for reversibility) because:
+  //   - music_1 noise floor: -111 dB (broadcast clean)
+  //   - music_2 noise floor:  -33 dB (78 dB worse — audible broadband hiss)
+  // The caller may still override via options.musicPath. If music_1.mp3 is
+  // missing the video is generated without background music (graceful degrade).
+  const PRIMARY_MUSIC = "music_1.mp3";
+  const primaryPath = path.join(assetsDir, PRIMARY_MUSIC);
+  const builtinMusic = existsSync(primaryPath) ? primaryPath : null;
   const musicPath = options.musicPath ?? builtinMusic;
 
   // ── Outro card state (T105) ──
@@ -1810,11 +1811,32 @@ export async function postProcessAvatarVideo(
     // the ducker — so the ducker is calibrated against LUFS-normalized
     // speech regardless of source (Azure or ElevenLabs).
     const SIDECHAIN_PARAMS = "threshold=0.05:ratio=8:attack=5:release=250:makeup=1:level_sc=1";
-    // Music bed at 12% (mid-point of user-requested 10–15% range). Plays
-    // continuously through the entire video via input `-stream_loop -1`
-    // (infinite loop) and `-t ${duration}` cap on the output. Sidechain
-    // ducks under speech automatically.
-    const MUSIC_BED_CHAIN = `aformat=fltp:48000:stereo,volume=0.12,afade=t=in:st=0:d=2:curve=qua,afade=t=out:st=${musicFadeOut}:d=2:curve=qua`;
+    // Music bed chain (user-locked: "music + voice both clearly audible, no
+    // disturbance"). Order matters — applied left to right:
+    //
+    //   aformat=fltp:48000:stereo  → match speech sample rate / channel layout
+    //                                so amix below has zero resampling cost
+    //   lowpass=f=6000              → KILLS the "typing/clicking" sound the
+    //                                 user reported. The lo-fi music tracks
+    //                                 contain hi-hat / shaker / cassette
+    //                                 percussion in 4–10 kHz which, at low
+    //                                 volume under speech, sound exactly like
+    //                                 keyboard taps (same band as consonant
+    //                                 sibilants). 6 kHz cutoff preserves the
+    //                                 musical body (bass + melody + pads all
+    //                                 live below 6 kHz) and discards the
+    //                                 distracting transients. Standard
+    //                                 broadcast technique for VO music beds.
+    //   volume=0.15                 → top of user-locked 10–15% range. Now
+    //                                 safe to be slightly louder because
+    //                                 lowpass removed the harsh frequencies
+    //                                 that fight speech sibilants. Sidechain
+    //                                 below still ducks ~6–8 dB under speech
+    //                                 so voice always wins.
+    //   afade in/out                → 2 s quartic fade-in at start + 2 s
+    //                                 fade-out at end so music doesn't pop
+    //                                 in/out abruptly.
+    const MUSIC_BED_CHAIN = `aformat=fltp:48000:stereo,lowpass=f=6000,volume=0.15,afade=t=in:st=0:d=2:curve=qua,afade=t=out:st=${musicFadeOut}:d=2:curve=qua`;
 
     if (musicIdx >= 0) {
       if (realism) {
