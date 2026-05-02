@@ -1113,8 +1113,9 @@ export async function postProcessAvatarVideo(
           mode: r.segment.mode,
           startSec: r.segment.startSec,
           endSec: r.segment.endSec,
-          conceptHead: (r.segment.concept ?? "").slice(0, 40),
-          pexelsId: r.asset!.pexelsId,
+          conceptHead: (r.segment.concept ?? r.segment.keyPhrase ?? "").slice(0, 40),
+          pexelsId: r.asset?.pexelsId ?? null,
+          localClip: r.localClipPath ? path.basename(r.localClipPath) : null,
         })),
       },
       "B-roll segments scheduled for render"

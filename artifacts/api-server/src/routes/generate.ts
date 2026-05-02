@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
 import { logger } from "../lib/logger.js";
 import { generateScript, generateBrandTheme, researchCompanyForScript, type ScriptStyle } from "../services/openai.js";
-import { generateAvatarVideo, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
+import { generateAvatarVideo, resolveAvatarStyle, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
 import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle } from "../services/ffmpegService.js";
 import { generateBackgroundImage } from "../services/imageGenerationService.js";
 import { getWordTimings } from "../services/speech.js";
@@ -168,6 +168,8 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
   if (avatar !== resolvedAvatar) {
     logger.warn({ avatar }, "Unknown avatar character, falling back to lisa");
   }
+  // Always pass a valid non-empty style. Empty string causes Azure InvalidStyleName.
+  const resolvedAvatarStyle = resolveAvatarStyle(resolvedAvatar, avatarStyle);
 
   const isElevenLabs = typeof voice === "string" && voice.startsWith("el:");
   const elVoiceId = isElevenLabs ? voice.slice(3) : null;
@@ -324,7 +326,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     const avatarConfig: AvatarJobConfig = {
       script,
       character: resolvedAvatar,
-      style: avatarStyle,
+      style: resolvedAvatarStyle,
       voice: isElevenLabs ? "en-US-AvaMultilingualNeural" : voice,
       voiceStyle: voiceStyle || undefined,
       backgroundColor: azureBgColor,

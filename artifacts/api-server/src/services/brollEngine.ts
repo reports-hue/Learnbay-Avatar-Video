@@ -173,7 +173,7 @@ export async function writeBrollAuditTrail(
         cachedFilePath: r.asset!.filePath,
       }));
     const skipped = resources
-      .filter((r) => r.asset === null && (r.segment.mode === "broll-pip" || r.segment.mode === "broll-fullscreen"))
+      .filter((r) => r.asset === null && r.localClipPath == null && (r.segment.mode === "broll-pip" || r.segment.mode === "broll-fullscreen" || r.segment.mode === "broll-text"))
       .map((r) => ({
         startSec: r.segment.startSec,
         endSec: r.segment.endSec,

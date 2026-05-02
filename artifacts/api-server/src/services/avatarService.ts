@@ -16,6 +16,18 @@ const PACING_VALUES: Record<PacingRate, string> = {
   fast: "1.05",
 };
 
+// Valid styles per Azure avatar character. First entry is the safe default.
+const AVATAR_DEFAULT_STYLES: Record<string, string> = {
+  lisa: "graceful-sitting",
+  harry: "business",
+  jeff: "business",
+};
+
+export function resolveAvatarStyle(character: string, requestedStyle?: string): string {
+  if (requestedStyle && requestedStyle.trim()) return requestedStyle.trim();
+  return AVATAR_DEFAULT_STYLES[character] ?? "graceful-sitting";
+}
+
 export interface AvatarJobConfig {
   script: string;
   character: string;
