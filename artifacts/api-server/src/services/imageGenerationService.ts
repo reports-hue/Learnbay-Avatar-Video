@@ -91,7 +91,27 @@ export async function generateBackgroundImage(
     ? "Composition: open central area with floor visible in the lower third, tall vertical clear zone left of frame center for a standing presenter shown waist-up; environment richness pushed to the sides and background plane."
     : "Composition: clean elegant desk or table surface implied across the lower third in soft focus, mid-frame vertical clear zone for a seated presenter shown chest-up; environment richness pushed to the sides and background plane.";
 
-  const prompt = `Ultra-wide ${aspect} cinematic video background for a marketing video about: "${topic}". ${sceneHint} ${composition} ${styleDesc}. Primary palette inspired by ${bgColor1} and ${bgColor2}. 8K photorealistic, hyper-detailed, golden hour lighting, shallow depth of field, anamorphic bokeh, premium broadcast quality. Absolutely NO people, NO faces, NO text, NO logos, NO words, NO numbers, NO letters, NO watermarks. Pure environment and atmosphere only — designed to have a talking-head presenter composited in the foreground.`;
+  // ── Logo placard reservation (Tier 2A) ──
+  // The corner logo chip is overlaid in ffmpeg at the TOP-RIGHT of the frame
+  // (see ffmpegService.ts ~line 1597). Without this hint the AI paints a
+  // generic background and the logo chip ends up looking pasted on. With it,
+  // the AI paints a clean architectural surface (frosted glass / brushed metal
+  // / wood / stone / etched plaque) sized roughly to the chip footprint, so
+  // the real logo composited on top reads as IN the scene, not ON the scene.
+  //
+  // Constraints kept tight to avoid two failure modes:
+  //   1) Garbled hallucinated text on the placard — mitigated by the strong
+  //      "completely BLANK, no text, no logo" instruction AND the global
+  //      negative prompt's "NO text, NO words, NO letters" still in force.
+  //   2) Placard dominating the composition — mitigated by explicit size
+  //      (~22% × 7%, matching the chip footprint) and "subtle, restrained,
+  //      architecturally integrated, not a billboard."
+  //
+  // If the AI ignores the instruction entirely, fallback = current behavior
+  // (clean bg + chip overlay), so the worst case is no regression.
+  const placardHint = "Architectural detail: include a clean, BLANK rectangular surface in the TOP-RIGHT corner of the frame (sized approximately 22% wide by 7% tall of the total frame), suitable for a corporate brand mark to be composited on top later. The surface should feel architecturally integrated — for example a frosted glass panel, a brushed metal nameplate, a wood plaque, an etched stone marker, a backlit signage area, or a softly-lit wall mount — sized small and tasteful, NOT dominating the composition. The placard surface itself MUST be COMPLETELY BLANK — do NOT render any logo, text, words, letters, numbers, or symbols on or around it. Leave it as an empty surface that picks up the scene's ambient lighting.";
+
+  const prompt = `Ultra-wide ${aspect} cinematic video background for a marketing video about: "${topic}". ${sceneHint} ${composition} ${placardHint} ${styleDesc}. Primary palette inspired by ${bgColor1} and ${bgColor2}. 8K photorealistic, hyper-detailed, golden hour lighting, shallow depth of field, anamorphic bokeh, premium broadcast quality. Absolutely NO people, NO faces, NO text, NO words, NO numbers, NO letters, NO watermarks anywhere in the image. Pure environment and atmosphere only — designed to have a talking-head presenter composited in the foreground and a brand mark composited onto the top-right placard surface.`;
 
   const url = `${endpoint}/openai/deployments/${imageDeployment}/images/generations?api-version=2025-04-01-preview`;
 

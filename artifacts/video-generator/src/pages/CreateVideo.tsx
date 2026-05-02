@@ -397,6 +397,28 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
   const [customCta, setCustomCta] = useState(brand.defaultCta || "");
   const [bgImageUrl, setBgImageUrl] = useState("");
 
+  // Step 2 — BG Preview / BYO upload (Tier 3)
+  // Single source of truth for both AI-previewed bgs and user-uploaded ones.
+  // When set, its `filename` is sent to /api/generate as `bgPreviewFilename`,
+  // which short-circuits the in-job AI bg generation step.
+  type BgPreviewState = {
+    filename: string;
+    bgUrl: string;
+    sizeBytes: number;
+    isVertical: boolean;
+    dimensions: { w: number; h: number; aspect: string };
+    logoZone: { xPct: number; yPct: number; wPct: number; hPct: number };
+    avatarZone: { xPct: number; yPct: number; wPct: number; hPct: number };
+    aspectWarning?: string | null;
+    uploadedDimensions?: { w: number; h: number; aspect: string };
+    source: "ai" | "upload";
+  };
+  const [bgPreview, setBgPreview] = useState<BgPreviewState | null>(null);
+  const [isPreviewingBg, setIsPreviewingBg] = useState(false);
+  const [bgPreviewError, setBgPreviewError] = useState<string | null>(null);
+  const [isUploadingBg, setIsUploadingBg] = useState(false);
+  const bgFileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Step 3 — avatar & voice
   const [avatar, setAvatar] = useState(() => {
     const saved = brand.defaultAvatar || "lisa";
@@ -718,6 +740,9 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
         logoUrl: brand.logoUrl || undefined,
         cta: brand.defaultCta || undefined,
         autoBackground: false,
+        // Tier 3: even in saved-brand mode, the user may upload a custom bg
+        // for THIS specific video — pass it through if present.
+        bgPreviewFilename: bgPreview?.filename,
         companyName: brand.companyName || undefined,
         companyWebsite: brand.websiteUrl || undefined,
         companyDescription: brand.description || undefined,
@@ -742,6 +767,9 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       backgroundColor,
       gradientColor2,
       bgImageUrl: scenePreset === "image" && bgImageUrl ? bgImageUrl : undefined,
+      // Tier 3: pre-approved AI bg or user upload short-circuits the in-job
+      // AI generation. Mutually exclusive with `bgImageUrl` (Azure path).
+      bgPreviewFilename: bgPreview?.filename,
       logoUrl: customLogoUrl || undefined,
       cta: customCta || undefined,
       autoBackground,
@@ -749,6 +777,66 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
       companyWebsite: brand.websiteUrl || undefined,
       companyDescription: brand.description || undefined,
     };
+  }
+
+  // ── BG Preview / BYO upload helpers (Tier 3) ──
+  // `previewBg`  → calls POST /api/preview-bg (synchronous AI generation, 15-30s)
+  // `uploadBgFile` → calls POST /api/upload-bg (multipart, near-instant)
+  // `clearBgPreview` → resets state when user wants to redo or remove
+  // All three update the same `bgPreview` slot, which buildPayload reads to
+  // populate `bgPreviewFilename` on /api/generate.
+  async function previewBg() {
+    if (!topic.trim()) {
+      setBgPreviewError("Enter a topic in step 1 first");
+      return;
+    }
+    setIsPreviewingBg(true);
+    setBgPreviewError(null);
+    try {
+      const resp = await fetch("/api/preview-bg", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: topic.trim(),
+          platform,
+          backgroundColor: brandMode === "saved" ? brand.backgroundColor : customBg,
+          gradientColor2: brandMode === "saved" ? brand.secondaryColor : undefined,
+          avatar,
+          avatarStyle,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
+      setBgPreview(data as BgPreviewState);
+    } catch (err) {
+      setBgPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsPreviewingBg(false);
+    }
+  }
+
+  async function uploadBgFile(file: File) {
+    setIsUploadingBg(true);
+    setBgPreviewError(null);
+    try {
+      const fd = new FormData();
+      fd.append("bg", file);
+      fd.append("platform", platform);
+      const resp = await fetch("/api/upload-bg", { method: "POST", body: fd });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
+      setBgPreview(data as BgPreviewState);
+    } catch (err) {
+      setBgPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsUploadingBg(false);
+      if (bgFileInputRef.current) bgFileInputRef.current.value = "";
+    }
+  }
+
+  function clearBgPreview() {
+    setBgPreview(null);
+    setBgPreviewError(null);
   }
 
   /**
@@ -989,6 +1077,168 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
                   <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
                     <Sparkles className="w-3 h-3 text-primary" /> AI generates a cinematic background image tuned to your topic
                   </p>
+                )}
+
+                {/* ─── BG Preview / BYO upload (Tier 3) ─────────────────── */}
+                {/* Shows for: auto preset (preview AI bg) + always (BYO upload). */}
+                {/* Skipped for "image" preset (user supplies hosted URL → Azure path). */}
+                {scenePreset !== "image" && (
+                  <div className="mt-3 rounded-xl border border-border bg-muted/30 p-3 space-y-3">
+                    {!bgPreview ? (
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-foreground">
+                            Preview your background <span className="text-muted-foreground font-normal">(optional)</span>
+                          </p>
+                          <span className="text-[10px] text-muted-foreground">
+                            {platform.includes("Reel") || platform.includes("Short") ? "9:16 · 1024×1536" : "16:9 · 1536×1024"}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground -mt-1">
+                          Generate an AI preview or upload your own image. Skip to let the renderer pick automatically.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {scenePreset === "auto" && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={previewBg}
+                              disabled={isPreviewingBg || isUploadingBg || !topic.trim()}
+                              className="gap-1.5"
+                            >
+                              {isPreviewingBg ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                              {isPreviewingBg ? "Generating…" : "Generate AI Preview"}
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => bgFileInputRef.current?.click()}
+                            disabled={isPreviewingBg || isUploadingBg}
+                            className="gap-1.5"
+                          >
+                            {isUploadingBg ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                            {isUploadingBg ? "Uploading…" : "Upload your own"}
+                          </Button>
+                          <input
+                            ref={bgFileInputRef}
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) uploadBgFile(f);
+                            }}
+                          />
+                        </div>
+                        {bgPreviewError && (
+                          <p className="text-[11px] text-rose-600 flex items-start gap-1">
+                            <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                            <span>{bgPreviewError}</span>
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            Background ready
+                            <span className="text-muted-foreground font-normal">
+                              · {bgPreview.source === "ai" ? "AI generated" : "Uploaded"}
+                            </span>
+                          </p>
+                          <button
+                            type="button"
+                            onClick={clearBgPreview}
+                            className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+                            aria-label="Remove background preview"
+                          >
+                            <X className="w-3 h-3" /> Remove
+                          </button>
+                        </div>
+                        {/* Preview image with avatar/logo zone overlays */}
+                        <div className="relative rounded-lg overflow-hidden bg-black/20 mx-auto"
+                          style={{
+                            aspectRatio: `${bgPreview.dimensions.w} / ${bgPreview.dimensions.h}`,
+                            maxWidth: bgPreview.isVertical ? "180px" : "320px",
+                          }}
+                        >
+                          <img
+                            src={bgPreview.bgUrl}
+                            alt="Background preview"
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                          {/* Avatar zone outline */}
+                          <div
+                            className="absolute border-2 border-dashed border-white/70 rounded pointer-events-none flex items-end justify-center pb-1"
+                            style={{
+                              left: `${bgPreview.avatarZone.xPct}%`,
+                              top: `${bgPreview.avatarZone.yPct}%`,
+                              width: `${bgPreview.avatarZone.wPct}%`,
+                              height: `${bgPreview.avatarZone.hPct}%`,
+                            }}
+                          >
+                            <span className="text-[8px] font-bold text-white bg-black/60 px-1 rounded">AVATAR</span>
+                          </div>
+                          {/* Logo zone outline */}
+                          <div
+                            className="absolute border-2 border-dashed border-amber-300 rounded pointer-events-none flex items-center justify-center"
+                            style={{
+                              left: `${bgPreview.logoZone.xPct}%`,
+                              top: `${bgPreview.logoZone.yPct}%`,
+                              width: `${bgPreview.logoZone.wPct}%`,
+                              height: `${bgPreview.logoZone.hPct}%`,
+                            }}
+                          >
+                            <span className="text-[7px] font-bold text-amber-100 bg-black/60 px-1 rounded">LOGO</span>
+                          </div>
+                        </div>
+                        {/* Spec card */}
+                        <div className="text-[10px] text-muted-foreground space-y-0.5">
+                          <p>Render size: <span className="text-foreground font-mono">{bgPreview.dimensions.w}×{bgPreview.dimensions.h}</span> ({bgPreview.dimensions.aspect})</p>
+                          {bgPreview.uploadedDimensions && (
+                            <p>Source size: <span className="text-foreground font-mono">{bgPreview.uploadedDimensions.w}×{bgPreview.uploadedDimensions.h}</span></p>
+                          )}
+                          <p>File: <span className="text-foreground font-mono">{(bgPreview.sizeBytes / 1024).toFixed(0)} KB</span></p>
+                        </div>
+                        {bgPreview.aspectWarning && (
+                          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1">
+                            <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                            <span>{bgPreview.aspectWarning}</span>
+                          </p>
+                        )}
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          {scenePreset === "auto" && bgPreview.source === "ai" && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={previewBg}
+                              disabled={isPreviewingBg || isUploadingBg}
+                              className="gap-1.5"
+                            >
+                              {isPreviewingBg ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                              Regenerate
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => bgFileInputRef.current?.click()}
+                            disabled={isPreviewingBg || isUploadingBg}
+                            className="gap-1.5"
+                          >
+                            {isUploadingBg ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                            Replace with upload
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
 

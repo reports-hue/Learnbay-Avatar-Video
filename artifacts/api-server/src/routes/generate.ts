@@ -6,6 +6,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
+import multer from "multer";
 import { logger } from "../lib/logger.js";
 import * as jobStore from "../lib/jobStore.js";
 import type { JobState, JobResult } from "../lib/jobStore.js";
@@ -122,6 +123,19 @@ export interface GenerateRequest {
    * expensive avatar+ffmpeg pipeline runs.
    */
   scriptOverride?: string;
+  /**
+   * Optional pre-approved background image filename (Tier 3 BG Preview/BYO).
+   * Must be a basename like `bg_preview_abc123.jpg` produced by either
+   * `/api/preview-bg` (AI-generated) or `/api/upload-bg` (user-uploaded).
+   * When present, runGenerationJob:
+   *   - Skips the in-job AI background generation step
+   *   - Resolves the file from outputsDir (path traversal sanitized)
+   *   - Uses it as the ffmpeg compositing background (same downstream code
+   *     path as the auto-generated AI bg, so realism / chromakey / Ken Burns
+   *     all behave identically)
+   * Mutually exclusive with `bgImageUrl` (which goes to Azure compositing).
+   */
+  bgPreviewFilename?: string;
 }
 
 // ─── Async generation job ─────────────────────────────────────────
@@ -149,7 +163,28 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     companyWebsite = "",
     companyDescription = "",
     scriptOverride,
+    bgPreviewFilename,
   } = body;
+
+  // ── User-supplied background (Tier 3 BG Preview/BYO) ──
+  // Resolve `bgPreviewFilename` to a local file path. We sanitize aggressively
+  // (basename only, allowed chars, must start with bg_preview_) to prevent
+  // path traversal: even though express.json parsing won't let "../" through
+  // path separators, basename + regex is defense-in-depth.
+  let userBgImagePath: string | undefined;
+  if (typeof bgPreviewFilename === "string" && bgPreviewFilename.length > 0) {
+    const safeName = path.basename(bgPreviewFilename).replace(/[^a-zA-Z0-9._-]/g, "");
+    if (/^bg_preview_[a-zA-Z0-9]+\.(jpg|jpeg|png|webp)$/i.test(safeName)) {
+      const candidate = path.join(outputsDir, safeName);
+      if (existsSync(candidate)) {
+        userBgImagePath = candidate;
+      } else {
+        logger.warn({ bgPreviewFilename: safeName }, "User-supplied bg preview file not found; falling back to AI/gradient");
+      }
+    } else {
+      logger.warn({ bgPreviewFilename }, "User-supplied bg preview filename rejected by sanitizer");
+    }
+  }
 
   // Whitelist of Azure Avatar characters confirmed to work with this API version
   const VALID_AVATAR_CHARACTERS = ["lisa", "harry", "jeff"];
@@ -183,7 +218,9 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     const needsResearch = !hasOverride && companyName.trim().length > 0;
     const needsTheme = autoBackground || !backgroundColor;
     const hasImageDeployment = !!(process.env.AZURE_IMAGE_DEPLOYMENT || process.env.AZURE_OPENAI_ENDPOINT);
-    const needsAiBg = autoBackground && hasImageDeployment && !bgImageUrl;
+    // Skip AI bg generation when the user pre-approved one via /api/preview-bg
+    // or uploaded their own via /api/upload-bg — the file is already on disk.
+    const needsAiBg = autoBackground && hasImageDeployment && !bgImageUrl && !userBgImagePath;
 
     const [companyContext, brandThemeResult] = await Promise.all([
       needsResearch
@@ -209,7 +246,12 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     }
 
     // ── AI background image generation (gpt-image-1) ──
-    let aiBgImagePath: string | undefined;
+    // If user pre-approved/uploaded a bg via Tier 3 flow, short-circuit:
+    // use their file directly. Otherwise, generate one if needsAiBg.
+    let aiBgImagePath: string | undefined = userBgImagePath;
+    if (userBgImagePath) {
+      logger.info({ userBgImagePath }, "Using user-supplied background image (preview/upload)");
+    }
     if (needsAiBg) {
       updateJob(jobId, { step: "ai_background", percent: 16, message: "Generating AI background image…" });
       try {
@@ -518,6 +560,180 @@ router.post("/script", async (req: Request, res: Response) => {
     res.status(500).json({ error: e?.message ?? "Script generation failed" });
   }
 });
+
+// ─── BG Preview / BYO upload (Tier 3) ────────────────────────────
+// Helper: produce placement-zone metadata so the frontend can overlay
+// rectangles on the preview image showing where the avatar (chromakey
+// composite) and the logo chip will land in the final render. Numbers
+// must stay in sync with ffmpegService.ts overlay coordinates.
+function getBgPlacementSpec(platform: string) {
+  const isVertical =
+    platform === "YouTube Shorts" ||
+    platform === "Instagram Reels" ||
+    platform === "Facebook Reels";
+  const dimensions = isVertical
+    ? { w: 1024, h: 1536, aspect: "9:16" as const }
+    : { w: 1536, h: 1024, aspect: "16:9" as const };
+  // Logo zone — matches ffmpegService.ts: top-right margin 2.5% (vertical)
+  // or 2% (horizontal); chip up to 25%×8% (vertical) or 16%×13% (horizontal).
+  const logoZone = isVertical
+    ? { xPct: 72.5, yPct: 2.5, wPct: 25, hPct: 8 }
+    : { xPct: 82, yPct: 2, wPct: 16, hPct: 13 };
+  // Avatar zone — empirical from real renders; central column, occupies
+  // the lower portion of the frame (sitting pose default). The bg should
+  // keep this region visually quiet so the avatar doesn't fight the scene.
+  const avatarZone = isVertical
+    ? { xPct: 10, yPct: 35, wPct: 80, hPct: 65 }
+    : { xPct: 25, yPct: 20, wPct: 50, hPct: 80 };
+  return { isVertical, dimensions, logoZone, avatarZone };
+}
+
+// ─── POST /api/preview-bg — synchronous AI bg generation for review ──
+// Returns a previewable bg image the user can approve, regenerate, or
+// replace via /api/upload-bg before the expensive avatar+ffmpeg pipeline.
+// Uses `bg_preview_<id>.jpg` filenames so they don't collide with the
+// in-job `bg_<videoId>.jpg` files. Synchronous (15-30s) — frontend shows
+// a spinner; no jobStore overhead needed.
+router.post("/preview-bg", async (req: Request, res: Response) => {
+  const body = req.body as Pick<
+    GenerateRequest,
+    "topic" | "platform" | "backgroundColor" | "gradientColor2" | "avatar" | "avatarStyle"
+  >;
+  const topic = (body.topic ?? "").trim();
+  const platform = (body.platform ?? "").trim();
+  if (!topic || !platform) {
+    res.status(400).json({ error: "topic and platform are required" });
+    return;
+  }
+  const hasImageDeployment = !!(process.env.AZURE_IMAGE_DEPLOYMENT || process.env.AZURE_OPENAI_ENDPOINT);
+  if (!hasImageDeployment) {
+    res.status(503).json({
+      error: "AI image generation is not configured on this server. Use the upload option to supply your own background.",
+    });
+    return;
+  }
+
+  try {
+    const previewId = uuidv4().replace(/-/g, "").slice(0, 12);
+    const filename = `bg_preview_${previewId}.jpg`;
+    const avatar = body.avatar ?? "lisa";
+    const avatarStyle = resolveAvatarStyle(avatar, body.avatarStyle ?? "");
+    const bgColor1 = body.backgroundColor ?? "#1a1a2e";
+    const bgColor2 = body.gradientColor2 ?? bgColor1;
+
+    const localPath = await generateBackgroundImage(
+      topic,
+      "cinematic_dark",
+      bgColor1,
+      bgColor2,
+      platform,
+      filename,
+      getAvatarPose(avatar, avatarStyle),
+    );
+    const stat = statSync(localPath);
+    const spec = getBgPlacementSpec(platform);
+    res.json({
+      filename,
+      bgUrl: `/api/video/${filename}`,
+      sizeBytes: stat.size,
+      ...spec,
+      source: "ai" as const,
+    });
+  } catch (err) {
+    const e = err as { message?: string; response?: { status?: number; data?: unknown } };
+    req.log.error(
+      { message: e?.message, status: e?.response?.status, responseData: e?.response?.data },
+      "BG preview generation failed"
+    );
+    res.status(500).json({ error: e?.message ?? "Background preview generation failed" });
+  }
+});
+
+// ─── POST /api/upload-bg — user-supplied background image (BYO) ──
+// Multipart "bg" field; PNG/JPG/WEBP up to 10 MB. Stores under the same
+// `bg_preview_*` namespace as /api/preview-bg so /api/generate's sanitizer
+// accepts both. Returns aspect-ratio match info so the frontend can warn
+// users uploading a 16:9 photo when they're rendering a 9:16 short.
+const uploadBg = multer({
+  storage: multer.diskStorage({
+    destination: outputsDir,
+    filename: (_req, file, cb) => {
+      // Preserve extension for downstream tooling, default to .jpg.
+      const ext = path.extname(file.originalname).toLowerCase();
+      const safeExt = /^\.(jpg|jpeg|png|webp)$/i.test(ext) ? ext : ".jpg";
+      cb(null, `bg_preview_${uuidv4().replace(/-/g, "").slice(0, 12)}${safeExt}`);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (_req, file, cb) => {
+    if (/^image\/(png|jpe?g|webp)$/i.test(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPG, or WEBP images are allowed"));
+  },
+});
+
+router.post(
+  "/upload-bg",
+  uploadBg.single("bg"),
+  async (req: Request, res: Response) => {
+    if (!req.file) {
+      res.status(400).json({ error: "No background image uploaded" });
+      return;
+    }
+    const platform = (req.body?.platform ?? "").trim();
+    if (!platform) {
+      // Clean up the orphaned upload before bailing.
+      try { unlinkSync(req.file.path); } catch { /* ignore */ }
+      res.status(400).json({ error: "platform is required (form field)" });
+      return;
+    }
+
+    try {
+      // ffprobe → real dimensions, so we can warn on aspect mismatch.
+      const probeOut = await execFileAsync("ffprobe", [
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "json",
+        req.file.path,
+      ]);
+      const probe = JSON.parse(probeOut.stdout) as { streams?: Array<{ width?: number; height?: number }> };
+      const w = probe.streams?.[0]?.width ?? 0;
+      const h = probe.streams?.[0]?.height ?? 0;
+      if (w === 0 || h === 0) {
+        try { unlinkSync(req.file.path); } catch { /* ignore */ }
+        res.status(400).json({ error: "Uploaded file is not a readable image" });
+        return;
+      }
+
+      const spec = getBgPlacementSpec(platform);
+      const uploadedAspect = w / h;
+      const targetAspect = spec.dimensions.w / spec.dimensions.h;
+      const aspectDiff = Math.abs(uploadedAspect - targetAspect) / targetAspect;
+      const aspectWarning = aspectDiff > 0.05
+        ? `Image aspect ratio (${w}×${h}) doesn't match ${spec.dimensions.aspect}. It will be cropped or letterboxed during render.`
+        : null;
+
+      logger.info(
+        { filename: req.file.filename, w, h, platform, aspectDiff: aspectDiff.toFixed(3) },
+        "User bg uploaded"
+      );
+      res.json({
+        filename: req.file.filename,
+        bgUrl: `/api/video/${req.file.filename}`,
+        sizeBytes: req.file.size,
+        uploadedDimensions: { w, h, aspect: `${w}:${h}` },
+        ...spec,
+        aspectWarning,
+        source: "upload" as const,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      try { unlinkSync(req.file.path); } catch { /* ignore */ }
+      logger.warn({ err: msg }, "BG upload failed");
+      res.status(400).json({ error: msg });
+    }
+  },
+);
 
 // ─── POST /api/generate — start job, return jobId immediately ─────
 router.post("/generate", async (req: Request, res: Response) => {

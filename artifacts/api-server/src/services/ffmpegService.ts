@@ -1693,10 +1693,21 @@ export async function postProcessAvatarVideo(
     const af: string[] = [];
     const musicFadeOut = Math.max(0, duration - 1.5);
 
-    // Speech processing chain — TWO-PASS LOUDNORM.
-    // ElevenLabs is studio-mastered audio: skip the artificial room "aecho"
-    // (it was only there to humanise dry Azure TTS) and use a lighter
-    // loudnorm pass so we don't squash the existing dynamics.
+    // Speech processing chain — TWO-PASS LOUDNORM + HIGHPASS.
+    //
+    // Pipeline order (Tier 1 polish):
+    //   aformat → introMute → highpass(80Hz) → loudnorm
+    //
+    // - highpass=f=80: removes sub-voice rumble (<80Hz). Voice fundamentals
+    //   start at ~85Hz (male) and ~165Hz (female), so 80Hz cuts only HVAC
+    //   rumble / mic handling noise / room boom. K-weighted LUFS already
+    //   discounts <100Hz, so adding highpass before the apply-pass shifts
+    //   the final loudness by <0.1 LU — safely within tolerance.
+    //
+    // - aecho REMOVED (was: aecho=0.8:0.9:40:0.3 on Azure TTS only).
+    //   The slap echo was a 90s-era trick to humanise dry TTS; modern
+    //   broadcast voiceover is dry. measureLoudness is unaffected because
+    //   it measures the raw source without any filters.
     //
     // Two-pass loudnorm:
     //   Pass 1 (already done above for measurement): print_format=json on
@@ -1744,21 +1755,40 @@ export async function postProcessAvatarVideo(
       ? `,volume=0.0:enable='lt(t\\,${rampStart})',afade=t=in:st=${rampStart}:d=0.100`
       : "";
     const speechChain = isElSpeech
-      ? `aformat=fltp:48000:stereo${introMute},${loudnormFilter}`
-      : `aformat=fltp:44100:stereo${introMute},${loudnormFilter},aecho=0.8:0.9:40:0.3`;
+      ? `aformat=fltp:48000:stereo${introMute},highpass=f=80,${loudnormFilter}`
+      : `aformat=fltp:44100:stereo${introMute},highpass=f=80,${loudnormFilter}`;
+
+    // Sidechain ducking params (broadcast standard for VO under music):
+    //   threshold=0.05  → ~-26 dBFS linear; speech reliably exceeds this
+    //                     after loudnorm (peaks ~-1 dBTP, avg ~-23 LUFS)
+    //   ratio=8         → ~6-8 dB attenuation while speech is present
+    //   attack=5 ms     → fast clamp when a syllable starts
+    //   release=250 ms  → smooth lift in pauses (no audible pumping)
+    //   makeup=1        → no makeup gain (music returns to its 0.17 level)
+    //   level_sc=1      → unity gain on the sidechain key signal
+    // The asplit=2 tap of the speech bus into [speech_out, speech_key]
+    // ensures the same post-loudnorm signal is BOTH heard AND used to key
+    // the ducker — so the ducker is calibrated against LUFS-normalized
+    // speech regardless of source (Azure or ElevenLabs).
+    const SIDECHAIN_PARAMS = "threshold=0.05:ratio=8:attack=5:release=250:makeup=1:level_sc=1";
+    const MUSIC_BED_CHAIN = `aformat=fltp:48000:stereo,volume=0.17,afade=t=in:st=0:d=2:curve=qua,afade=t=out:st=${musicFadeOut}:d=2:curve=qua`;
 
     if (musicIdx >= 0) {
       if (realism) {
         af.push(
           `[${speechSrcIdx}:a]${speechChain}[speech_e]`,
-          `[${musicIdx}:a]aformat=fltp:48000:stereo,volume=0.17,afade=t=in:st=0:d=2:curve=qua,afade=t=out:st=${musicFadeOut}:d=2:curve=qua[bg_music]`,
-          `[speech_e][bg_music]amix=inputs=2:duration=first:normalize=0[aout]`
+          `[speech_e]asplit=2[speech_out][speech_key]`,
+          `[${musicIdx}:a]${MUSIC_BED_CHAIN}[bg_music]`,
+          `[bg_music][speech_key]sidechaincompress=${SIDECHAIN_PARAMS}[bg_music_ducked]`,
+          `[speech_out][bg_music_ducked]amix=inputs=2:duration=first:normalize=0[aout]`
         );
       } else {
         af.push(
           `[${speechSrcIdx}:a]aformat=fltp:48000:stereo,volume=1.0[speech]`,
-          `[${musicIdx}:a]aformat=fltp:48000:stereo,volume=0.17,afade=t=in:st=0:d=2:curve=qua,afade=t=out:st=${musicFadeOut}:d=2:curve=qua[bg_music]`,
-          `[speech][bg_music]amix=inputs=2:duration=first:normalize=0[aout]`
+          `[speech]asplit=2[speech_out][speech_key]`,
+          `[${musicIdx}:a]${MUSIC_BED_CHAIN}[bg_music]`,
+          `[bg_music][speech_key]sidechaincompress=${SIDECHAIN_PARAMS}[bg_music_ducked]`,
+          `[speech_out][bg_music_ducked]amix=inputs=2:duration=first:normalize=0[aout]`
         );
       }
     } else {
