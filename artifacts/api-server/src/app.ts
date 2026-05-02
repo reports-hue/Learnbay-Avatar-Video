@@ -41,8 +41,11 @@ app.use("/api", requireAuth);
 app.use("/api", router);
 
 if (process.env.NODE_ENV === "production") {
-  // Serve the pre-built React frontend from the video-generator dist folder
-  const frontendDist = path.resolve(__dirname, "../../video-generator/dist/public");
+  // Serve the pre-built React frontend that build.mjs copies into our own
+  // dist folder (`dist/public`). We can't reach into the sibling
+  // `artifacts/video-generator/dist/public` because Cloud Run only ships the
+  // api-server's artifact directory.
+  const frontendDist = path.resolve(__dirname, "./public");
   app.use("/", express.static(frontendDist));
   app.get("*", (_req, res) => {
     res.sendFile(path.join(frontendDist, "index.html"));

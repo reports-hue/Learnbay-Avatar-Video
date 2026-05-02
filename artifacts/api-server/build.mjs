@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
-import { rm } from "node:fs/promises";
+import { cp, rm, stat } from "node:fs/promises";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
@@ -123,7 +123,38 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
   });
 }
 
-buildAll().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+async function copyFrontend() {
+  // Cloud Run only ships the api-server's artifact directory in production —
+  // the sibling `artifacts/video-generator/dist/public` is NOT included. Copy
+  // the pre-built frontend into our own dist so app.ts can serve it from
+  // `./public` (relative to dist/index.mjs's __dirname) at runtime.
+  const frontendSrc = path.resolve(
+    artifactDir,
+    "..",
+    "video-generator",
+    "dist",
+    "public",
+  );
+  const frontendDst = path.resolve(artifactDir, "dist", "public");
+
+  try {
+    const s = await stat(frontendSrc);
+    if (!s.isDirectory()) {
+      throw new Error(`expected directory at ${frontendSrc}`);
+    }
+  } catch (err) {
+    throw new Error(
+      `Frontend build not found at ${frontendSrc}. Run \`pnpm --filter @workspace/video-generator run build\` before building the api-server. (${err.message})`,
+    );
+  }
+
+  await cp(frontendSrc, frontendDst, { recursive: true });
+  console.log(`  copied frontend ${frontendSrc} -> ${frontendDst}`);
+}
+
+buildAll()
+  .then(copyFrontend)
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
