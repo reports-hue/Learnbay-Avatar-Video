@@ -422,10 +422,8 @@ async function generateAnimatedCaptionsAss(
   const baseFontSize = isVertical ? 52 : 42;
   const activeFontSize = isVertical ? 58 : 46;
   const accentAss = toAssColor(accentColor);
-  // Alignment=2 → bottom-center; MarginV = distance from bottom edge in px.
-  // lowerH accounts for the lower-third strip so captions sit above it.
-  // ~180px extra for portrait / ~100px for landscape ≈ 1.5-inch visual gap.
-  const bottomMargin = lowerH + (isVertical ? 180 : 100);
+  // Alignment=5 → middle-center; caption sits vertically centered on screen.
+  const captionY = h - lowerH - (isVertical ? 160 : 120);
 
   // Stable-chunk karaoke: group words into CHUNK-word blocks that stay
   // on screen for the entire group duration. Only the ACTIVE word changes
@@ -441,7 +439,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,${baseFontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,3,2,40,40,${bottomMargin},1
+Style: Cap,Arial,${baseFontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,3,5,40,40,${captionY},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -495,8 +493,8 @@ async function generateStaticCaptionsAss(
 ): Promise<void> {
   const isVertical = h > w;
   const fontSize = isVertical ? 54 : 42;
-  // Alignment=2 → bottom-center; MarginV = distance from bottom edge in px.
-  const bottomMargin = lowerH + (isVertical ? 180 : 100);
+  // Alignment=5 → middle-center; caption sits vertically centered on screen.
+  const captionY = h - lowerH - (isVertical ? 140 : 110);
   const CHUNK = 3;
 
   const header = `[Script Info]
@@ -507,7 +505,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,3,2,40,40,${bottomMargin},1
+Style: Cap,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,3,5,40,40,${captionY},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1408,20 +1406,10 @@ export async function postProcessAvatarVideo(
       const endSec = Math.max(startSec + 0.1, Math.min(seg.endSec, duration));
       const outLabel = `with_broll_${i}`;
       if (seg.mode === "broll-pip") {
-        fp.push(
-          ...buildBrollPipFilter({
-            brollInputIdx: inputIdx,
-            startSec,
-            endSec,
-            outW,
-            outH,
-            isVertical,
-            inputLabel: lastV,
-            outputLabel: outLabel,
-            uniqueTag: String(i),
-            frameColor: options.primaryColor,
-          })
-        );
+        // B-roll PIP overlay is disabled — avatar plays clean with captions only.
+        // Skip this segment: pass the label through unchanged.
+        lastV = lastV; // no-op, label stays the same
+        continue;
       } else {
         // broll-fullscreen
         fp.push(

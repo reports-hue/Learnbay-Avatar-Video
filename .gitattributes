@@ -3,3 +3,4 @@ artifacts/api-server/outputs/video_8f93292b099d.mp4 filter=lfs diff=lfs merge=lf
 artifacts/api-server/outputs/video_b4b705f34483.mp4 filter=lfs diff=lfs merge=lfs -text
 artifacts/api-server/outputs/video_73264e1b40f0.mp4 filter=lfs diff=lfs merge=lfs -text
 artifacts/api-server/outputs/video_4baeb9fb5095.mp4 filter=lfs diff=lfs merge=lfs -text
+artifacts/api-server/outputs/video_4ec9055667aa.mp4 filter=lfs diff=lfs merge=lfs -text
