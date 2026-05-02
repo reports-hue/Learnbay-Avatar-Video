@@ -10,7 +10,7 @@ import { logger } from "../lib/logger.js";
 import * as jobStore from "../lib/jobStore.js";
 import type { JobState, JobResult } from "../lib/jobStore.js";
 import { generateScript, generateBrandTheme, researchCompanyForScript, type ScriptStyle } from "../services/openai.js";
-import { generateAvatarVideo, resolveAvatarStyle, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
+import { generateAvatarVideo, resolveAvatarStyle, getAvatarPose, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
 import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle } from "../services/ffmpegService.js";
 import { generateBackgroundImage } from "../services/imageGenerationService.js";
 import { getWordTimings } from "../services/speech.js";
@@ -219,7 +219,8 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
           resolvedBgColor1,
           resolvedBgColor2 ?? resolvedBgColor1,
           platform,
-          `bg_${videoId}.jpg`
+          `bg_${videoId}.jpg`,
+          getAvatarPose(resolvedAvatar, resolvedAvatarStyle),
         );
         logger.info({ aiBgImagePath }, "AI background image ready");
       } catch (err) {

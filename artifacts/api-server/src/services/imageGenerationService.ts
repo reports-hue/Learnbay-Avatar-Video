@@ -26,7 +26,17 @@ export async function generateBackgroundImage(
   bgColor1: string,
   bgColor2: string,
   platform: string,
-  outputFilename: string
+  outputFilename: string,
+  /**
+   * Avatar pose. Influences scene COMPOSITION so the AI-painted bg leaves
+   * the correct negative space for the composited avatar:
+   *   - "sitting"  → desk/table surface in lower foreground, mid-frame
+   *                  vertical clear zone for the seated upper body
+   *   - "standing" → open central area with floor visible, taller
+   *                  vertical clear zone
+   * Optional — defaults to "sitting" (matches our default Lisa avatar).
+   */
+  avatarPose?: "sitting" | "standing"
 ): Promise<string> {
   // Dedicated image endpoint/key takes priority; fall back to general Azure OpenAI
   const endpoint = (
@@ -72,12 +82,21 @@ export async function generateBackgroundImage(
     sceneHint = "Setting: warm cosy library or study with leather and wood textures, soft amber accent lighting.";
   }
 
-  const prompt = `Ultra-wide ${aspect} cinematic video background for a marketing video about: "${topic}". ${sceneHint} ${styleDesc}. Primary palette inspired by ${bgColor1} and ${bgColor2}. 8K photorealistic, hyper-detailed, golden hour lighting, shallow depth of field, anamorphic bokeh, premium broadcast quality. Absolutely NO people, NO faces, NO text, NO logos, NO words, NO numbers, NO letters, NO watermarks. Pure environment and atmosphere only — designed to have a talking-head presenter composited in the foreground.`;
+  // Pose-aware composition hint — keeps the central foreground / lower-third
+  // visually interesting but uncluttered so the composited avatar reads cleanly.
+  // Sitting avatars need a desk/table surface implied; standing avatars need
+  // the floor visible and more vertical headroom.
+  const pose = avatarPose ?? "sitting";
+  const composition = pose === "standing"
+    ? "Composition: open central area with floor visible in the lower third, tall vertical clear zone left of frame center for a standing presenter shown waist-up; environment richness pushed to the sides and background plane."
+    : "Composition: clean elegant desk or table surface implied across the lower third in soft focus, mid-frame vertical clear zone for a seated presenter shown chest-up; environment richness pushed to the sides and background plane.";
+
+  const prompt = `Ultra-wide ${aspect} cinematic video background for a marketing video about: "${topic}". ${sceneHint} ${composition} ${styleDesc}. Primary palette inspired by ${bgColor1} and ${bgColor2}. 8K photorealistic, hyper-detailed, golden hour lighting, shallow depth of field, anamorphic bokeh, premium broadcast quality. Absolutely NO people, NO faces, NO text, NO logos, NO words, NO numbers, NO letters, NO watermarks. Pure environment and atmosphere only — designed to have a talking-head presenter composited in the foreground.`;
 
   const url = `${endpoint}/openai/deployments/${imageDeployment}/images/generations?api-version=2025-04-01-preview`;
 
   logger.info(
-    { topic, backgroundStyle, imageDeployment, size, endpoint: url },
+    { topic, backgroundStyle, imageDeployment, size, endpoint: url, avatarPose: pose },
     "Generating AI background image"
   );
 

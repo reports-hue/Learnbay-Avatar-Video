@@ -56,6 +56,17 @@ export interface PexelsSearchOptions {
    * match, narrow enough to keep response size small.
    */
   perPage?: number;
+  /**
+   * Pexels video ids to AVOID returning. Used by the b-roll engine to
+   * prevent the same clip showing up in two different segments of the
+   * same render. When non-empty, included in the cache key so a second
+   * search with the same query but different exclusions caches separately.
+   *
+   * Best-effort: if every candidate (across all fallback queries) is
+   * excluded, the function still returns null — callers must accept that
+   * total diversity sometimes loses to "no clip at all".
+   */
+  excludePexelsIds?: number[];
 }
 
 export interface PexelsAsset {
@@ -121,13 +132,66 @@ export type PexelsVideo = z.infer<typeof PexelsVideoSchema>;
 
 function buildCacheKey(opts: PexelsSearchOptions): string {
   const minDur = opts.minDurationSec ?? 3;
+  // Exclusions only enter the key when non-empty so the common (no-diversity)
+  // case keeps its existing cache hits. Sorted so [42,7] and [7,42] hash to
+  // the same key.
+  const excluded = (opts.excludePexelsIds ?? []).slice().sort((a, b) => a - b);
   const payload = JSON.stringify({
     query: opts.query.trim().toLowerCase(),
     orientation: opts.orientation,
     minDurationSec: minDur,
     v: "v1",
+    ...(excluded.length > 0 ? { excluded } : {}),
   });
   return createHash("sha256").update(payload).digest("hex");
+}
+
+/**
+ * Build an ordered fallback chain of search queries from a single LLM
+ * concept string. The first query is the concept verbatim; subsequent
+ * queries strip filler words and shrink toward the most-visual keywords.
+ *
+ * Why: Pexels relevance ranking handles short concrete queries best
+ * ("happy team meeting"), but the LLM sometimes emits longer or more
+ * abstract phrases ("collaborative office team success"). A single failed
+ * search would otherwise drop a whole segment to zero b-roll. The chain
+ * gives Pexels multiple shots before we give up.
+ *
+ * Pure function — exported for testing. No deduplication of identical
+ * variants; downstream loop handles that with a Set.
+ */
+const QUERY_FILLER_WORDS = new Set([
+  "a", "an", "the", "of", "for", "with", "to", "in", "on", "at", "by",
+  "about", "through", "via", "using", "and", "or", "but", "as", "is",
+  "are", "was", "were", "be", "been", "being", "from", "into", "over",
+  "under", "than", "then", "this", "that", "these", "those", "it", "its",
+]);
+
+export function buildSearchQueries(concept: string): string[] {
+  const cleaned = concept.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!cleaned) return [];
+  const queries: string[] = [cleaned];
+
+  const tokens = cleaned.split(" ").filter(Boolean);
+  const keywords = tokens.filter((t) => !QUERY_FILLER_WORDS.has(t));
+
+  // Variant 2: top-3 keywords joined (only if it actually differs)
+  if (keywords.length >= 1) {
+    const top3 = keywords.slice(0, 3).join(" ");
+    if (top3 && top3 !== cleaned && !queries.includes(top3)) queries.push(top3);
+  }
+  // Variant 3: top-2 keywords (more generic)
+  if (keywords.length >= 2) {
+    const top2 = keywords.slice(0, 2).join(" ");
+    if (!queries.includes(top2)) queries.push(top2);
+  }
+  // Variant 4: single most-visual keyword as last-ditch
+  if (keywords.length >= 1) {
+    const top1 = keywords[0];
+    if (!queries.includes(top1)) queries.push(top1);
+  }
+
+  return queries;
 }
 
 async function fileExists(p: string): Promise<boolean> {
@@ -194,11 +258,18 @@ export function pickBestVideo(
   videos: PexelsVideo[],
   orientation: Orientation,
   minDurationSec: number,
-  maxDurationSec: number
+  maxDurationSec: number,
+  excludePexelsIds?: number[]
 ): PexelsVideo | null {
   const targetIsPortrait = orientation === "portrait";
+  const excluded = excludePexelsIds && excludePexelsIds.length > 0
+    ? new Set(excludePexelsIds)
+    : null;
   const matches = videos.filter(
-    (v) => v.duration >= minDurationSec && v.duration <= maxDurationSec
+    (v) =>
+      v.duration >= minDurationSec &&
+      v.duration <= maxDurationSec &&
+      (!excluded || !excluded.has(v.id))
   );
   if (matches.length === 0) return null;
 
@@ -284,51 +355,76 @@ export async function searchVideo(
     }
   }
 
-  // ----- Live search -----
-  let videos: PexelsVideo[] = [];
-  try {
-    const resp = await axios.get("https://api.pexels.com/videos/search", {
-      params: {
-        query,
-        orientation: opts.orientation,
-        per_page: perPage,
-        size: "medium", // Pexels allowed values: small | medium | large
-      },
-      headers: { Authorization: apiKey },
-      timeout: 20_000,
-    });
-    const parsed = PexelsSearchResponseSchema.safeParse(resp.data);
-    if (!parsed.success) {
-      logger.warn({
-        msg: "pexels: response schema mismatch",
-        query: query.slice(0, 60),
-        firstError: parsed.error.errors[0]?.message?.slice(0, 200),
+  // ----- Live search with fallback query chain -----
+  // Try each query variant in order; first one that returns a usable
+  // (non-excluded, duration-matching, mp4-bearing) video wins.
+  const queryChain = buildSearchQueries(query);
+  const tried = new Set<string>();
+  let video: PexelsVideo | null = null;
+  let lastQueryUsed: string = query;
+
+  for (const q of queryChain) {
+    if (tried.has(q)) continue;
+    tried.add(q);
+    let videos: PexelsVideo[] = [];
+    try {
+      const resp = await axios.get("https://api.pexels.com/videos/search", {
+        params: {
+          query: q,
+          orientation: opts.orientation,
+          per_page: perPage,
+          size: "medium", // Pexels allowed values: small | medium | large
+        },
+        headers: { Authorization: apiKey },
+        timeout: 20_000,
       });
-      return null;
+      const parsed = PexelsSearchResponseSchema.safeParse(resp.data);
+      if (!parsed.success) {
+        logger.warn({
+          msg: "pexels: response schema mismatch",
+          query: q.slice(0, 60),
+          firstError: parsed.error.errors[0]?.message?.slice(0, 200),
+        });
+        // Don't try more variants on a schema mismatch — Pexels API itself
+        // is broken; subsequent calls will hit the same problem.
+        return null;
+      }
+      videos = parsed.data.videos;
+    } catch (e) {
+      const ax = e as AxiosError;
+      logger.warn({
+        msg: "pexels: search request failed",
+        query: q.slice(0, 60),
+        status: ax.response?.status,
+        shortErr: ax.message?.slice(0, 200),
+      });
+      // For network/HTTP errors keep trying — the next variant might
+      // happen to hit a healthy edge or pass the rate-limit window.
+      continue;
     }
-    videos = parsed.data.videos;
-  } catch (e) {
-    const ax = e as AxiosError;
-    logger.warn({
-      msg: "pexels: search request failed",
-      query: query.slice(0, 60),
-      status: ax.response?.status,
-      shortErr: ax.message?.slice(0, 200),
-    });
-    return null;
+
+    if (videos.length === 0) continue;
+
+    const candidate = pickBestVideo(
+      videos,
+      opts.orientation,
+      minDur,
+      maxDur,
+      opts.excludePexelsIds,
+    );
+    if (candidate) {
+      video = candidate;
+      lastQueryUsed = q;
+      break;
+    }
   }
 
-  if (videos.length === 0) {
-    logger.warn({ msg: "pexels: no results", query: query.slice(0, 60) });
-    return null;
-  }
-
-  const video = pickBestVideo(videos, opts.orientation, minDur, maxDur);
   if (!video) {
     logger.warn({
-      msg: "pexels: no usable video after filter",
+      msg: "pexels: no usable video across all query variants",
       query: query.slice(0, 60),
-      candidates: videos.length,
+      variantsTried: tried.size,
+      excludedCount: opts.excludePexelsIds?.length ?? 0,
     });
     return null;
   }
@@ -385,6 +481,9 @@ export async function searchVideo(
     width: asset.width,
     height: asset.height,
     photographer: video.user.name,
+    originalQuery: query.slice(0, 60),
+    queryUsed: lastQueryUsed.slice(0, 60),
+    excludedCount: opts.excludePexelsIds?.length ?? 0,
   });
 
   return asset;

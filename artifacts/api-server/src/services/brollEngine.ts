@@ -78,6 +78,11 @@ export async function fetchBrollResources(
   // Animated text clips cached separately from Pexels clips.
   const animTextCacheDir = path.join(path.dirname(cacheDir), "anim_text");
   const out: BrollResource[] = [];
+  // Per-job diversity ledger: pexelsIds already used in THIS render.
+  // Prevents the same clip from showing twice across two different segments.
+  // Cleared at the start of each fetchBrollResources call (so two unrelated
+  // jobs don't punish each other's cache hits).
+  const usedPexelsIds = new Set<number>();
 
   for (const seg of segments) {
     // ── broll-text: disabled — skip any that sneak through old caches ──
@@ -97,11 +102,15 @@ export async function fetchBrollResources(
     }
     const segDur = seg.endSec - seg.startSec;
     const minDur = Math.max(2, Math.ceil(segDur + 0.5));
+    const excludePexelsIds = usedPexelsIds.size > 0
+      ? Array.from(usedPexelsIds)
+      : undefined;
     const asset = await searchVideo({
       query: seg.concept,
       orientation,
       minDurationSec: minDur,
       cacheDir,
+      excludePexelsIds,
     });
     if (!asset) {
       logger.warn(
@@ -110,9 +119,16 @@ export async function fetchBrollResources(
           startSec: seg.startSec,
           endSec: seg.endSec,
           conceptHead: seg.concept.slice(0, 60),
+          excludedCount: excludePexelsIds?.length ?? 0,
         },
         "B-roll lookup returned no asset; segment will be skipped"
       );
+    } else {
+      // Mark this clip as used so subsequent segments in the same render
+      // don't pick it up again. Track BOTH cache-hit and live-fetch results;
+      // the goal is no duplicate footage across segments regardless of
+      // whether the asset came from a cached query or a fresh download.
+      usedPexelsIds.add(asset.pexelsId);
     }
     out.push({ segment: seg, asset });
   }
