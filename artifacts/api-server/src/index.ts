@@ -1,5 +1,6 @@
 import app from "./app.js";
 import { logger } from "./lib/logger.js";
+import * as jobStore from "./lib/jobStore.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
@@ -30,6 +31,18 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 await ensureDirs();
+
+// Sweep zombie jobs left running by a previous process that crashed mid-render.
+// Anything still pending/running and older than 60 minutes gets marked failed
+// so polling clients receive a definitive answer instead of hanging forever.
+try {
+  jobStore.sweepStuck(60 * 60 * 1000);
+} catch (err) {
+  logger.warn(
+    { err: (err as Error).message },
+    "jobStore.sweepStuck failed at startup",
+  );
+}
 
 app.listen(port, (err) => {
   if (err) {

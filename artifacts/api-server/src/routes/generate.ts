@@ -7,6 +7,8 @@ import { promisify } from "util";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
 import { logger } from "../lib/logger.js";
+import * as jobStore from "../lib/jobStore.js";
+import type { JobState, JobResult } from "../lib/jobStore.js";
 import { generateScript, generateBrandTheme, researchCompanyForScript, type ScriptStyle } from "../services/openai.js";
 import { generateAvatarVideo, resolveAvatarStyle, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
 import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle } from "../services/ffmpegService.js";
@@ -67,39 +69,26 @@ const PACING_SSML_RATE: Record<PacingRate, string> = {
 const VERTICAL_PLATFORMS = new Set(["YouTube Shorts", "Instagram Reels", "Facebook Reels"]);
 
 // ─── Job store ─────────────────────────────────────────────────────
-export interface JobResult {
-  videoId: string;
-  videoUrl: string;
-  thumbnailUrl: string | null;
-  script: string;
-  brandTheme: { bgColor1: string; bgColor2: string; accentColor: string };
-  cta?: string;
-}
+// Job state is persisted to SQLite via `lib/jobStore.ts` so that progress
+// survives server restarts. Public types re-exported for any external code
+// that previously imported them from this module.
+export type { JobResult, JobState };
 
-export interface JobState {
-  status: "pending" | "running" | "done" | "failed";
-  step: string;
-  percent: number;
-  message: string;
-  script?: string;
-  result?: JobResult;
-  error?: string;
-  createdAt: number;
-}
-
-const jobs = new Map<string, JobState>();
-
-// Clean up jobs older than 4 hours
+// Clean up jobs older than 4 hours, every 30 minutes.
+const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
 setInterval(() => {
-  const cutoff = Date.now() - 4 * 60 * 60 * 1000;
-  for (const [id, job] of jobs) {
-    if (job.createdAt < cutoff) jobs.delete(id);
+  try {
+    const removed = jobStore.cleanup(FOUR_HOURS_MS);
+    if (removed > 0) {
+      logger.info({ removed }, "jobStore: cleaned up expired jobs");
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, "jobStore cleanup failed");
   }
 }, 30 * 60 * 1000);
 
 function updateJob(jobId: string, patch: Partial<JobState>) {
-  const existing = jobs.get(jobId);
-  if (existing) jobs.set(jobId, { ...existing, ...patch });
+  jobStore.update(jobId, patch);
 }
 
 // ─── Generate request type ────────────────────────────────────────
@@ -525,7 +514,7 @@ router.post("/generate", async (req: Request, res: Response) => {
   }
 
   const jobId = uuidv4().replace(/-/g, "").slice(0, 16);
-  jobs.set(jobId, {
+  jobStore.set(jobId, {
     status: "pending",
     step: "start",
     percent: 0,
@@ -541,10 +530,7 @@ router.post("/generate", async (req: Request, res: Response) => {
 
 // ─── GET /api/jobs — list all completed job results (recovery) ────
 router.get("/jobs", (_req: Request, res: Response) => {
-  const completed = Array.from(jobs.entries())
-    .filter(([, j]) => j.status === "done" && j.result)
-    .map(([id, j]) => ({ jobId: id, ...j.result }));
-  res.json(completed);
+  res.json(jobStore.listDone());
 });
 
 // ─── GET /api/videos — scan outputs dir for all video files ────────
@@ -611,7 +597,7 @@ router.get("/jobs/:jobId", (req: Request, res: Response) => {
   const jobId = Array.isArray(req.params["jobId"])
     ? req.params["jobId"][0]
     : req.params["jobId"];
-  const job = jobs.get(jobId ?? "");
+  const job = jobStore.get(jobId ?? "");
   if (!job) {
     res.status(404).json({ error: "Job not found. It may have expired (jobs are kept for 4 hours)." });
     return;
