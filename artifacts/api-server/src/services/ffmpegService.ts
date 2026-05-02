@@ -922,7 +922,19 @@ export async function postProcessAvatarVideo(
   // a corner-logo fade-in at 1.3-1.6s, and a brand-accent vertical strip
   // that "swooshes" left→right across the frame. Below 4s or without a logo
   // the intro is skipped entirely (graph behavior unchanged).
-  const introState = computeIntroState(duration, !!logoPath);
+  //
+  // When `minimalOverlays` is on we force-inactivate the sting. This is the
+  // SAME branch the renderer already takes for short / logo-less videos:
+  // every downstream conditional gates on `introState.active`, so flipping
+  // this one flag cleanly disables the blackout, the centered large logo,
+  // the swoosh strip, the corner-logo fade-in animation, the audio mute
+  // window, and shifts the beat-detection start back to t=0. The corner
+  // logo CHIP itself still overlays from t=0 (logoPath is untouched) — only
+  // its fade-in animation is skipped.
+  const computedIntroState = computeIntroState(duration, !!logoPath);
+  const introState = options.minimalOverlays
+    ? { ...computedIntroState, active: false }
+    : computedIntroState;
 
   // ── ASS files ──
   let ctaAssPath: string | null = null;

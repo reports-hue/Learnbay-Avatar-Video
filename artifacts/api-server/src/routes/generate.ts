@@ -280,6 +280,14 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
 
     updateJob(jobId, { step: "script_done", percent: 18, message: "Script ready. Getting word timings…", script });
 
+    // ── Minimal-overlays mode (user-locked spec) ──
+    // Single switch governing the "clean look": no intro sting, no opening
+    // hook overlay, no T103 numeric callouts, no T204 stat-popin, b-roll
+    // restricted to fullscreen. Flip to `false` to restore the legacy stack.
+    // This MUST stay in sync with `minimalOverlays` passed into
+    // `postProcessAvatarVideo` below — the route is the authoritative gate.
+    const MINIMAL_OVERLAYS = true;
+
     // ── Intro-sting leading break ──
     // When a logo is present the intro sting shows for INTRO_BREAK_SEC seconds.
     // To prevent the avatar from mouthing words behind the blackout (and the
@@ -288,7 +296,11 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     // This pushes all speech — and therefore all word-timing events — INTRO_BREAK_SEC
     // seconds later in the timeline, aligning perfectly with the moment the
     // blackout lifts and the avatar becomes visible.
-    const introDurationSec = logoUrl ? INTRO_BREAK_SEC : 0;
+    //
+    // When MINIMAL_OVERLAYS is on the sting itself is suppressed in postprocess,
+    // so we MUST also zero the leading break here — otherwise the SSML/EL audio
+    // would have 1s of leading silence with no blackout covering it (dead air).
+    const introDurationSec = logoUrl && !MINIMAL_OVERLAYS ? INTRO_BREAK_SEC : 0;
     const introBreakMs = Math.round(introDurationSec * 1000);
 
     // ── Step 2: Word timings / ElevenLabs TTS ──
@@ -399,11 +411,16 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
             // rendered by the premium stat-popin engine (multi-layer ASS),
             // broll-* segments by the Pexels b-roll engine. Both pipelines
             // share the same plan but emit independent ASS/filter graphs.
+            // T204 stat-popin segments are still computed (cheap) but the
+            // route no longer forwards them to postprocess when MINIMAL_OVERLAYS
+            // is on (see the postProcessAvatarVideo call below).
             statPopinSegments = plan.segments.filter((s) => s.mode === "stat-popin");
+            // B-roll restricted to FULLSCREEN ONLY per user-locked spec.
+            // `broll-pip` (picture-in-picture) is intentionally excluded — the
+            // segmenter prompt already discourages it, this is defence in depth
+            // so a regression in the LLM plan can't sneak a PiP cutaway through.
             const brollSegments = plan.segments.filter(
-              (s) =>
-                s.mode === "broll-pip" ||
-                s.mode === "broll-fullscreen"
+              (s) => s.mode === "broll-fullscreen"
             );
             if (brollSegments.length > 0) {
               updateJob(jobId, {
@@ -464,7 +481,13 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       script,
       elAudioPath,
       brollResources: brollResources.length > 0 ? brollResources : undefined,
-      statPopinSegments: statPopinSegments.length > 0 ? statPopinSegments : undefined,
+      // Authoritative gate: in MINIMAL_OVERLAYS mode the route refuses to
+      // forward stat-popin segments at all, so the T204 engine in postprocess
+      // never even tries to draw the pill / count-up / icon / particles.
+      // Setting this to undefined is equivalent to "no stats detected".
+      statPopinSegments:
+        MINIMAL_OVERLAYS || statPopinSegments.length === 0 ? undefined : statPopinSegments,
+      minimalOverlays: MINIMAL_OVERLAYS,
     });
 
     // Persist b-roll attribution audit trail (license compliance).
