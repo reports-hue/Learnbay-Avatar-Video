@@ -6,7 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 
 interface LoginProps {
-  onLoginSuccess: (email: string) => void;
+  /**
+   * Called after a successful POST /api/auth/login. Receives the issued token
+   * AND email so the parent (AuthGate) can persist the session and flip its
+   * own state in the same render tick. Passing the token directly (instead of
+   * via a module-level side-channel) eliminates the ordering hazard where the
+   * parent could read the token before this component had assigned it.
+   */
+  onLoginSuccess: (token: string, email: string) => void;
 }
 
 /**
@@ -58,11 +65,13 @@ export function Login({ onLoginSuccess }: LoginProps) {
       }
 
       const body = (await res.json()) as { token: string; email: string };
-      onLoginSuccess(body.email);
-      // Token storage handled by the caller (AuthGate) so the gate can flip
-      // state and unmount Login in the same tick.
-      // We pass token via a side channel: the global helper below.
-      pendingToken = body.token;
+      if (!body.token || !body.email) {
+        setError("Login response was incomplete. Please try again.");
+        return;
+      }
+      // Hand off to AuthGate which will persist the session AND flip its own
+      // state in the same tick (unmounting this component).
+      onLoginSuccess(body.token, body.email);
     } catch (err) {
       setError("Could not reach the server. Please check your connection and try again.");
       console.error("[Login] network error", err);
@@ -158,11 +167,3 @@ export function Login({ onLoginSuccess }: LoginProps) {
   );
 }
 
-// Side-channel for the issued token, consumed by AuthGate after onLoginSuccess
-// fires. This avoids prop-drilling the token through and keeps Login's API tiny.
-export let pendingToken: string | null = null;
-export function consumePendingToken(): string | null {
-  const t = pendingToken;
-  pendingToken = null;
-  return t;
-}

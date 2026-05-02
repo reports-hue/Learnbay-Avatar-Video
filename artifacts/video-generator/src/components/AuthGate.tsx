@@ -7,7 +7,7 @@ import {
   clearSession,
   onAuthExpired,
 } from "@/lib/auth";
-import { Login, consumePendingToken } from "@/components/Login";
+import { Login } from "@/components/Login";
 
 type AuthState =
   | { status: "checking" }
@@ -94,15 +94,9 @@ export function AuthGate({ children }: AuthGateProps) {
   if (state.status === "anonymous") {
     return (
       <Login
-        onLoginSuccess={(email) => {
-          const token = consumePendingToken();
-          if (token) {
-            setSession(token, email);
-            setState({ status: "authenticated", email });
-          } else {
-            // Defensive: should never happen, but keep us in a safe state.
-            setState({ status: "anonymous" });
-          }
+        onLoginSuccess={(token, email) => {
+          setSession(token, email);
+          setState({ status: "authenticated", email });
         }}
       />
     );
