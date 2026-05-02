@@ -765,6 +765,27 @@ export interface PostProcessOptions {
    */
   statPopinSegments?: Segment[];
   /**
+   * Minimal-overlays mode (user-requested clean look).
+   *
+   * When `true`, the renderer skips every "decorative" stat / hook / intro
+   * overlay that competes with the avatar + caption focus, specifically:
+   *   - T103 numeric callouts (auto-pop "70%" / "$2.5M" / "10x" stats)
+   *   - T204 stat-popin animation is implicitly off too because the route
+   *     stops passing `statPopinSegments` when this flag is true (defence
+   *     in depth — even if a future caller passes them, the route is the
+   *     authoritative gate).
+   *   - Opening hook text overlay (first sentence floating at top 0–2s)
+   *   - Intro sting (blackout/flash + audio mute window + corner-logo
+   *     fade-in animation). The corner logo still appears at full alpha
+   *     from t=0 because we only flip the sting state, not the logo path.
+   *
+   * Untouched even when `true`: AI background, corner logo chip, ambient
+   * floating particles, outro/CTA card, captions (with brand-color word
+   * highlight), full audio chain, hard rules. This flag is a clean, single
+   * switch — flip it false to restore every legacy overlay.
+   */
+  minimalOverlays?: boolean;
+  /**
    * Per-job identifier used to scope all intermediate ASS file names
    * (`outro_card_<videoId>.ass`, `captions_<videoId>.ass`, etc) so two
    * concurrent renders never trash each other's caption / CTA / hook /
@@ -1764,14 +1785,18 @@ export async function postProcessAvatarVideo(
     //   ratio=8         → ~6-8 dB attenuation while speech is present
     //   attack=5 ms     → fast clamp when a syllable starts
     //   release=250 ms  → smooth lift in pauses (no audible pumping)
-    //   makeup=1        → no makeup gain (music returns to its 0.17 level)
+    //   makeup=1        → no makeup gain (music returns to its 0.12 level)
     //   level_sc=1      → unity gain on the sidechain key signal
     // The asplit=2 tap of the speech bus into [speech_out, speech_key]
     // ensures the same post-loudnorm signal is BOTH heard AND used to key
     // the ducker — so the ducker is calibrated against LUFS-normalized
     // speech regardless of source (Azure or ElevenLabs).
     const SIDECHAIN_PARAMS = "threshold=0.05:ratio=8:attack=5:release=250:makeup=1:level_sc=1";
-    const MUSIC_BED_CHAIN = `aformat=fltp:48000:stereo,volume=0.17,afade=t=in:st=0:d=2:curve=qua,afade=t=out:st=${musicFadeOut}:d=2:curve=qua`;
+    // Music bed at 12% (mid-point of user-requested 10–15% range). Plays
+    // continuously through the entire video via input `-stream_loop -1`
+    // (infinite loop) and `-t ${duration}` cap on the output. Sidechain
+    // ducks under speech automatically.
+    const MUSIC_BED_CHAIN = `aformat=fltp:48000:stereo,volume=0.12,afade=t=in:st=0:d=2:curve=qua,afade=t=out:st=${musicFadeOut}:d=2:curve=qua`;
 
     if (musicIdx >= 0) {
       if (realism) {
