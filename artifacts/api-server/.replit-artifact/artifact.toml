@@ -15,10 +15,26 @@ run = "pnpm --filter @workspace/api-server run dev"
 [services.production]
 
 [services.production.build]
-args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
+# In production, api-server is the sole deployable service. It serves /api/*
+# itself AND falls back to serving the pre-built React frontend at /* (see
+# src/app.ts lines 43-49). So this build step must produce BOTH bundles
+# before the container starts: first compile the React static files into
+# artifacts/video-generator/dist/public, then bundle the api-server itself.
+args = [
+  "sh",
+  "-c",
+  "pnpm --filter @workspace/video-generator run build && pnpm --filter @workspace/api-server run build",
+]
 
 [services.production.build.env]
 NODE_ENV = "production"
+# vite.config.ts validates these at config-load time (even for `vite build`),
+# so they must be present in the build environment, not just at dev runtime.
+# Values mirror the dev defaults from artifacts/video-generator/.replit-artifact:
+# the static bundle ends up under dist/public regardless of PORT (PORT only
+# matters for the dev server), and BASE_PATH="/" is what api-server serves at.
+PORT = "24396"
+BASE_PATH = "/"
 
 [services.production.run]
 # we don't run through pnpm to make startup faster in production
