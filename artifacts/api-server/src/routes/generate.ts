@@ -323,6 +323,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       bgImageUrl: bgImageUrl || undefined,
       pacing,
       realism,
+      videoId,
       audioUrl: elAudioUrl,
       useTransparent,
       leadingBreakSec: introDurationSec > 0 ? introDurationSec : undefined,
@@ -404,6 +405,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     // ── Step 4: Post-process ──
     const outputFilename = `video_${videoId}.mp4`;
     await postProcessAvatarVideo(avatarVideoPath, {
+      videoId,
       platform,
       logoUrl: logoUrl || undefined,
       primaryColor: resolvedAccent,
@@ -449,6 +451,19 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     };
 
     updateJob(jobId, { status: "done", step: "done", percent: 100, message: "Your video is ready!", result });
+
+    // Best-effort cleanup of the per-job raw avatar download (24-50 MB each).
+    // Only fires on success; on failure we keep it for debugging. Errors are
+    // swallowed — file may already be gone, or be a webm vs mp4 mismatch.
+    try {
+      const fsp = await import("fs/promises");
+      await Promise.all([
+        fsp.unlink(path.join(outputsDir, `avatar_raw_${videoId}.mp4`)).catch(() => undefined),
+        fsp.unlink(path.join(outputsDir, `avatar_raw_${videoId}.webm`)).catch(() => undefined),
+      ]);
+    } catch {
+      // ignore — cleanup is best-effort
+    }
   } catch (err) {
     const e = err as { message?: string; response?: { status?: number; data?: unknown } };
     const status = e?.response?.status;

@@ -31,7 +31,7 @@
 import axios, { AxiosError } from "axios";
 import { createHash } from "crypto";
 import { createWriteStream } from "fs";
-import { mkdir, readFile, stat, writeFile } from "fs/promises";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "fs/promises";
 import path from "path";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
@@ -287,6 +287,13 @@ export function pickBestVideo(
 }
 
 async function downloadToFile(url: string, dest: string): Promise<number> {
+  // ATOMIC write — stream to a unique `.partial` sibling first, then rename
+  // into `dest` only after the stream finishes cleanly. If anything fails
+  // mid-stream (network drop, timeout, server restart), `dest` is never
+  // created and the cache stays clean. The previous direct-to-dest write
+  // could leave a non-zero partial file in the cache, silently serving
+  // corrupt video to every subsequent same-query render.
+  const tmpPath = `${dest}.partial.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
   const resp = await axios.get<NodeJS.ReadableStream>(url, {
     responseType: "stream",
     timeout: 60_000,
@@ -295,16 +302,28 @@ async function downloadToFile(url: string, dest: string): Promise<number> {
   if (resp.status !== 200) {
     throw new Error(`download status=${resp.status}`);
   }
-  await new Promise<void>((resolve, reject) => {
-    const ws = createWriteStream(dest);
-    resp.data.pipe(ws);
-    ws.on("finish", () => resolve());
-    ws.on("error", reject);
-    resp.data.on("error", reject);
-  });
-  const s = await stat(dest);
-  if (s.size === 0) throw new Error("empty download");
-  return s.size;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const ws = createWriteStream(tmpPath);
+      resp.data.pipe(ws);
+      ws.on("finish", () => resolve());
+      ws.on("error", reject);
+      resp.data.on("error", reject);
+    });
+    const s = await stat(tmpPath);
+    if (s.size === 0) {
+      await unlink(tmpPath).catch(() => undefined);
+      throw new Error("empty download");
+    }
+    // Atomic rename — POSIX guarantees this is observable as all-or-nothing
+    // for readers on the same filesystem (cache dir is local, so this holds).
+    await rename(tmpPath, dest);
+    return s.size;
+  } catch (err) {
+    // Best-effort partial cleanup so the cache dir doesn't accumulate junk.
+    await unlink(tmpPath).catch(() => undefined);
+    throw err;
+  }
 }
 
 // ---------- Public API ----------

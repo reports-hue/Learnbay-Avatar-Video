@@ -124,7 +124,9 @@ export async function prepareLogoFromBuffer(
   if (fmt === "svg") {
     pngPath = await rasterizeSvg(buf, destDir);
   } else if (fmt === "png" || fmt === "jpeg" || fmt === "gif" || fmt === "webp" || fmt === "bmp") {
-    pngPath = path.join(destDir, "logo_dl.png");
+    // Per-call unique filename — never `logo_dl.png` — so two concurrent
+    // logo preparations cannot overwrite each other (silent wrong-brand bug).
+    pngPath = path.join(destDir, `logo_dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`);
     await fs.writeFile(pngPath, buf);
   } else {
     throw new Error(`Unsupported logo format: ${fmt}`);

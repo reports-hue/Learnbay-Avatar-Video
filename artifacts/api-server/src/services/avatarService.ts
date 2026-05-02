@@ -69,6 +69,14 @@ export interface AvatarJobConfig {
   bgImageUrl?: string;
   pacing?: PacingRate;
   realism?: boolean;
+  /**
+   * Per-job identifier used to scope the on-disk filename for the downloaded
+   * Azure avatar raw video. Required so that two concurrent renders never
+   * overwrite each other's `avatar_raw.{mp4,webm}` (a SEVERE silent corruption
+   * bug — Job-A's post-process would read Job-B's avatar). Caller must pass
+   * the same `videoId` it uses for the final video filename.
+   */
+  videoId: string;
   // When set, use pre-synthesized audio (e.g. ElevenLabs) instead of Azure TTS
   audioUrl?: string;
   // When true: request a transparent-background WebM (VP9) so the avatar arrives
@@ -467,7 +475,9 @@ async function runAvatarJobOnce(config: AvatarJobConfig): Promise<string> {
       // pick the right demuxer. mp4 vs webm container both work but downstream
       // checks key off the path.
       const outputExt = useTransparent ? "webm" : "mp4";
-      const outputPath = path.join(outputsDir, `avatar_raw.${outputExt}`);
+      // Per-job filename — never `avatar_raw.{ext}` — so concurrent renders
+      // cannot overwrite each other (see AvatarJobConfig.videoId doc).
+      const outputPath = path.join(outputsDir, `avatar_raw_${config.videoId}.${outputExt}`);
       await downloadFile(videoUrl, outputPath);
       logger.info({ outputPath, transparent: useTransparent }, "Avatar video downloaded");
       return outputPath;

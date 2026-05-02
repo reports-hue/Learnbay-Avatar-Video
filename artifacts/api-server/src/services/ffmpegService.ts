@@ -764,13 +764,23 @@ export interface PostProcessOptions {
    * still fire — render is never blocked.
    */
   statPopinSegments?: Segment[];
+  /**
+   * Per-job identifier used to scope all intermediate ASS file names
+   * (`outro_card_<videoId>.ass`, `captions_<videoId>.ass`, etc) so two
+   * concurrent renders never trash each other's caption / CTA / hook /
+   * statpopin / callout overlays mid-render. Required.
+   */
+  videoId: string;
 }
 
 export async function postProcessAvatarVideo(
   avatarVideoPath: string,
-  options: PostProcessOptions = {}
+  options: PostProcessOptions
 ): Promise<string> {
-  const outputPath = path.join(outputsDir, options.outputFilename ?? "final.mp4");
+  if (!options.videoId) {
+    throw new Error("postProcessAvatarVideo: options.videoId is required (per-job ASS file scoping)");
+  }
+  const outputPath = path.join(outputsDir, options.outputFilename ?? `video_${options.videoId}.mp4`);
   const avatarDuration = await getDuration(avatarVideoPath);
 
   // If ElevenLabs audio is supplied, retime the avatar video so its overall
@@ -897,7 +907,7 @@ export async function postProcessAvatarVideo(
   let ctaAssPath: string | null = null;
   let outroCardAssPath: string | null = null;
   if (outroState.active) {
-    outroCardAssPath = path.join(outputsDir, "outro_card.ass");
+    outroCardAssPath = path.join(outputsDir, `outro_card_${options.videoId}.ass`);
     await generateOutroCardAss({
       startSec: outroState.startSec,
       durationSec: duration,
@@ -909,7 +919,7 @@ export async function postProcessAvatarVideo(
       outputPath: outroCardAssPath,
     });
   } else if (options.cta) {
-    ctaAssPath = path.join(outputsDir, "cta.ass");
+    ctaAssPath = path.join(outputsDir, `cta_${options.videoId}.ass`);
     await generateCtaAssFile(options.cta, ctaAssPath, duration, outW, outH, accentColor, lowerH);
   }
 
@@ -917,7 +927,7 @@ export async function postProcessAvatarVideo(
   const captionStyle = options.captionStyle ?? "animated";
   const wordTimings = options.wordTimings ?? [];
   if (captionStyle !== "none" && wordTimings.length > 0) {
-    captionAssPath = path.join(outputsDir, "captions.ass");
+    captionAssPath = path.join(outputsDir, `captions_${options.videoId}.ass`);
     // Compute b-roll time ranges so dual caption styles (CapAvatar bottom vs
     // CapBroll top) can be assigned per-chunk based on what's on screen.
     const brollRanges = (options.brollResources ?? [])
@@ -942,7 +952,7 @@ export async function postProcessAvatarVideo(
   // ── Opening hook text ASS ──
   let hookAssPath: string | null = null;
   if (options.script && realism) {
-    hookAssPath = path.join(outputsDir, "hook.ass");
+    hookAssPath = path.join(outputsDir, `hook_${options.videoId}.ass`);
     await generateHookAssFile(options.script, hookAssPath, outW, outH, accentColor);
   }
 
@@ -956,7 +966,7 @@ export async function postProcessAvatarVideo(
   const statPopinSegments = options.statPopinSegments ?? [];
   if (statPopinSegments.length > 0) {
     try {
-      const candidatePath = path.join(outputsDir, "statpopin.ass");
+      const candidatePath = path.join(outputsDir, `statpopin_${options.videoId}.ass`);
       const wrote = await generateStatPopinAss({
         segments: statPopinSegments,
         outputPath: candidatePath,
@@ -1000,7 +1010,7 @@ export async function postProcessAvatarVideo(
       return !statPopinLockouts.some(([a, b]) => mid >= a && mid <= b);
     });
     if (callouts.length > 0) {
-      calloutsAssPath = path.join(outputsDir, "callouts.ass");
+      calloutsAssPath = path.join(outputsDir, `callouts_${options.videoId}.ass`);
       await generateNumericCalloutsAss(callouts, calloutsAssPath, outW, outH, accentColor);
       logger.info(
         {
