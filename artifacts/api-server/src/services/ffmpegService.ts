@@ -971,8 +971,12 @@ export async function postProcessAvatarVideo(
   }
 
   // ── Opening hook text ASS ──
+  // Skipped when minimalOverlays is on — the user prefers a clean look with
+  // captions doing all the on-screen text work. The generator function and
+  // its consumer (subtitles filter ~line 1601) both stay intact for easy
+  // re-enable; we just leave hookAssPath null so the consumer no-ops.
   let hookAssPath: string | null = null;
-  if (options.script && realism) {
+  if (options.script && realism && !options.minimalOverlays) {
     hookAssPath = path.join(outputsDir, `hook_${options.videoId}.ass`);
     await generateHookAssFile(options.script, hookAssPath, outW, outH, accentColor);
   }
@@ -1018,12 +1022,14 @@ export async function postProcessAvatarVideo(
   }
 
   // ── Numeric callouts ASS (pop-in stat emphasis) ──
-  // Always-on whenever we have word timings. Detection is highly curated, so
+  // Always-on whenever we have word timings (unless minimalOverlays is set —
+  // then skipped entirely, so scripts mentioning "70%" or "$2.5M" don't get
+  // the bare-stat pop-in overlay either). Detection is highly curated, so
   // scripts without stats simply produce zero callouts and the file is empty.
   // Windows already covered by T204 stat-popin are filtered out so the same
   // stat is never double-rendered (T204 takes priority — it's strictly better).
   let calloutsAssPath: string | null = null;
-  if (wordTimings.length > 0) {
+  if (wordTimings.length > 0 && !options.minimalOverlays) {
     const allCallouts = findNumericCallouts(wordTimings);
     const callouts = allCallouts.filter((c) => {
       // Drop callout if its midpoint falls inside any stat-popin lockout window.
