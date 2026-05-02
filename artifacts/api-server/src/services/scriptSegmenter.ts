@@ -201,8 +201,28 @@ export function enforceBudget(segments: Segment[], opts: BudgetOptions): Segment
     return true;
   });
 
+  // 3.5 Enforce minimum avatar screen time between consecutive broll windows.
+  // Avatar must be visible for at least MIN_AVATAR_GAP seconds between any two
+  // broll segments. First broll must not start before MIN_FIRST_BROLL seconds.
+  // Any segment that violates these rules is DROPPED (safer than reshaping).
+  const MIN_AVATAR_GAP = 3.0;
+  const MIN_FIRST_BROLL = 2.0;
+  const gapEnforced: Segment[] = [];
+  let prevBrollEnd = -Infinity;
+  for (const seg of afterBrollCap) {
+    if (isBrollMode(seg)) {
+      const minStart = prevBrollEnd < 0 ? MIN_FIRST_BROLL : prevBrollEnd + MIN_AVATAR_GAP;
+      if (seg.startSec < minStart) {
+        // Not enough avatar time before this broll — drop it
+        continue;
+      }
+      prevBrollEnd = seg.endSec;
+    }
+    gapEnforced.push(seg);
+  }
+
   // 4. Cap total count (drop from END to preserve opening energy)
-  const capped = afterBrollCap.slice(0, maxCount);
+  const capped = gapEnforced.slice(0, maxCount);
 
   return capped;
 }
@@ -230,7 +250,8 @@ function cacheKey(input: {
   // Bump this when prompt or schema changes meaningfully so old caches are invalidated.
   // v2: added server-side stat-popin numeric validation + shortened intro lockout to 1.0s.
   // v3: added broll-text mode, fullscreen-only pattern, 65% b-roll budget.
-  h.update("|v3");
+  // v4: enforced 3s minimum avatar gap in prompt + enforceBudget; first broll ≥ 2s.
+  h.update("|v4");
   return h.digest("hex");
 }
 
@@ -325,7 +346,8 @@ RULES:
 - Each broll-text / broll-fullscreen segment MUST be 4–8 seconds long.
 - stat-popin segments: 0.6–1.2 seconds only.
 - Segments cannot overlap.
-- Never place a segment in the FIRST 1.0 seconds or the LAST 2.5 seconds.
+- Never place a segment in the FIRST 2.0 seconds or the LAST 2.5 seconds.
+- Avatar MUST be visible for AT LEAST 3 seconds between any two consecutive cutaways. Never schedule two broll segments with less than 3 seconds of avatar time between them.
 - Stat-popin MUST coincide with a numeric word actually present in the script.
 
 Return ONLY valid JSON (no markdown, no commentary):

@@ -354,8 +354,14 @@ export function buildBrollFullscreenFilter(
 
   const enableExpr = `'between(t\\,${startSec.toFixed(3)}\\,${endSec.toFixed(3)})'`;
 
+  // Loop the clip so it never runs out of frames. Without this, a clip that is
+  // even 1 frame shorter than the segment window (floating-point rounding) will
+  // leave the overlay with no input → black frame for the remainder of the window.
+  // size = frames needed for the segment + 60 safety frames (2 s at 30 fps).
+  const framesNeeded = Math.ceil(segLen * 30) + 60;
+
   return [
-    `[${brollInputIdx}:v]setpts=PTS-STARTPTS+${startSec.toFixed(3)}/TB,scale=${outW}:${outH}:force_original_aspect_ratio=increase,crop=${outW}:${outH},setsar=1,format=yuva420p[${sIn}]`,
+    `[${brollInputIdx}:v]loop=loop=-1:size=${framesNeeded}:start=0,setpts=PTS-STARTPTS+${startSec.toFixed(3)}/TB,scale=${outW}:${outH}:force_original_aspect_ratio=increase,crop=${outW}:${outH},setsar=1,format=yuva420p[${sIn}]`,
     `[${sIn}]fade=t=in:st=${startSec.toFixed(3)}:d=${fadeDur.toFixed(3)}:alpha=1,fade=t=out:st=${fadeOutSt.toFixed(3)}:d=${fadeDur.toFixed(3)}:alpha=1[${sFaded}]`,
     `[${inputLabel}][${sFaded}]overlay=0:0:format=auto:enable=${enableExpr}[${outputLabel}]`,
   ];
