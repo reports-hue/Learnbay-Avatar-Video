@@ -410,21 +410,28 @@ Dialogue: 0,0:00:01.00,${endTime},CTA,,0,0,0,,${cta}
 }
 
 // HeyGen-style animated captions: 3-word window, pill background, active word accent-colored
+// Dual-style: CapAvatar (large bottom) for avatar time, CapBroll (small top) for b-roll time.
 async function generateAnimatedCaptionsAss(
   wordTimings: WordTiming[],
   outputPath: string,
   w: number,
   h: number,
   accentColor: string,
-  lowerH: number
+  lowerH: number,
+  brollRanges?: Array<{ start: number; end: number }>
 ): Promise<void> {
   const isVertical = h > w;
   const baseFontSize = isVertical ? 52 : 42;
   const activeFontSize = isVertical ? 58 : 46;
+  const brollFontSize = isVertical ? 26 : 22;
   const accentAss = toAssColor(accentColor);
   // Alignment=2 → bottom-center. MarginV is the distance from the BOTTOM edge.
   // 1.5-inch equivalent: ~144 px of clear space above the lower-third strip.
   const bottomMargin = lowerH + (isVertical ? 144 : 144);
+
+  /** Returns true if midSec falls inside any b-roll cutaway window. */
+  const isBroll = (midSec: number) =>
+    (brollRanges ?? []).some((r) => midSec >= r.start && midSec <= r.end);
 
   // Stable-chunk karaoke: group words into CHUNK-word blocks that stay
   // on screen for the entire group duration. Only the ACTIVE word changes
@@ -440,7 +447,8 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,${baseFontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,3,2,40,40,${bottomMargin},1
+Style: CapAvatar,Arial,${baseFontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2.5,3,2,40,40,${bottomMargin},1
+Style: CapBroll,Arial,${brollFontSize},&H00DDDDDD,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,2,8,40,40,60,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -459,25 +467,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       ? nextChunkFirstWord.startSec - GAP_SEC
       : chunk[chunk.length - 1].startSec + chunk[chunk.length - 1].durationSec + 0.25;
 
-    // Emit one Dialogue per word in the chunk. Each event covers from that
-    // word's start to the next word's start (or the chunk end for the last
-    // word). The FULL chunk is shown every time; only the active word is
-    // accented. This means each word appears EXACTLY ONCE — no repetition.
-    for (let j = 0; j < chunk.length; j++) {
-      const wordStart = Math.max(0, chunk[j].startSec);
-      const wordEndRaw = j + 1 < chunk.length
-        ? chunk[j + 1].startSec - GAP_SEC
-        : chunkEndSec;
-      const wordEnd = Math.max(wordStart + 0.04, wordEndRaw);
+    // Route to CapBroll (small top) during b-roll cutaways, CapAvatar (large
+    // bottom karaoke) during avatar-on-screen time.
+    const chunkMidSec = (chunk[0].startSec + chunkEndSec) / 2;
+    if (isBroll(chunkMidSec)) {
+      // B-roll time: simple running transcript at top — no karaoke effects.
+      const text = chunk.map((cw) => cw.word).join(" ");
+      events.push(
+        `Dialogue: 0,${formatAssTime(chunk[0].startSec)},${formatAssTime(chunkEndSec)},CapBroll,,0,0,0,,${text}`
+      );
+    } else {
+      // Avatar time: word-by-word accent highlight karaoke at bottom.
+      for (let j = 0; j < chunk.length; j++) {
+        const wordStart = Math.max(0, chunk[j].startSec);
+        const wordEndRaw = j + 1 < chunk.length
+          ? chunk[j + 1].startSec - GAP_SEC
+          : chunkEndSec;
+        const wordEnd = Math.max(wordStart + 0.04, wordEndRaw);
 
-      const line = chunk.map((cw, idx) => {
-        if (idx === j) {
-          return `{\\c${accentAss}&\\b1\\fs${activeFontSize}\\shad1}${cw.word}{\\c&H00FFFFFF&\\b0\\fs${baseFontSize}\\shad0}`;
-        }
-        return `{\\c&H00FFFFFF&\\b0\\fs${baseFontSize}}${cw.word}`;
-      }).join(" ");
+        const line = chunk.map((cw, idx) => {
+          if (idx === j) {
+            return `{\\c${accentAss}&\\b1\\fs${activeFontSize}\\shad1}${cw.word}{\\c&H00FFFFFF&\\b0\\fs${baseFontSize}\\shad0}`;
+          }
+          return `{\\c&H00FFFFFF&\\b0\\fs${baseFontSize}}${cw.word}`;
+        }).join(" ");
 
-      events.push(`Dialogue: 0,${formatAssTime(wordStart)},${formatAssTime(wordEnd)},Cap,,0,0,0,,${line}`);
+        events.push(`Dialogue: 0,${formatAssTime(wordStart)},${formatAssTime(wordEnd)},CapAvatar,,0,0,0,,${line}`);
+      }
     }
   }
 
@@ -485,19 +501,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 }
 
 // Static captions: 3-word chunks with pill background
+// Dual-style: CapAvatar (large bottom) for avatar time, CapBroll (small top) for b-roll time.
 async function generateStaticCaptionsAss(
   wordTimings: WordTiming[],
   outputPath: string,
   w: number,
   h: number,
-  lowerH: number
+  lowerH: number,
+  brollRanges?: Array<{ start: number; end: number }>
 ): Promise<void> {
   const isVertical = h > w;
   const fontSize = isVertical ? 54 : 42;
+  const brollFontSize = isVertical ? 26 : 22;
   // Alignment=2 → bottom-center. MarginV is the distance from the BOTTOM edge.
-  // 1.5-inch equivalent: ~144 px of clear space above the lower-third strip.
   const bottomMargin = lowerH + (isVertical ? 144 : 144);
   const CHUNK = 3;
+
+  const isBroll = (midSec: number) =>
+    (brollRanges ?? []).some((r) => midSec >= r.start && midSec <= r.end);
 
   const header = `[Script Info]
 ScriptType: v4.00+
@@ -507,13 +528,13 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,3,2,40,40,${bottomMargin},1
+Style: CapAvatar,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,3,2,40,40,${bottomMargin},1
+Style: CapBroll,Arial,${brollFontSize},&H00DDDDDD,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,2,8,40,40,60,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
-  // Spec: 50 ms gap between consecutive caption events
   const GAP_SEC = 0.05;
   const events: string[] = [];
   for (let i = 0; i < wordTimings.length; i += CHUNK) {
@@ -527,7 +548,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const start = formatAssTime(startSec);
     const end = formatAssTime(endSec);
     const text = chunk.map((w) => w.word).join(" ");
-    events.push(`Dialogue: 0,${start},${end},Cap,,0,0,0,,${text}`);
+    const midSec = (startSec + endSec) / 2;
+    const style = isBroll(midSec) ? "CapBroll" : "CapAvatar";
+    events.push(`Dialogue: 0,${start},${end},${style},,0,0,0,,${text}`);
   }
 
   await fs.writeFile(outputPath, header + events.join("\n") + "\n", "utf8");
@@ -895,12 +918,25 @@ export async function postProcessAvatarVideo(
   const wordTimings = options.wordTimings ?? [];
   if (captionStyle !== "none" && wordTimings.length > 0) {
     captionAssPath = path.join(outputsDir, "captions.ass");
+    // Compute b-roll time ranges so dual caption styles (CapAvatar bottom vs
+    // CapBroll top) can be assigned per-chunk based on what's on screen.
+    const brollRanges = (options.brollResources ?? [])
+      .filter((r) => {
+        const hasLocal = !!(r.localClipPath && existsSync(r.localClipPath));
+        const hasPexels = r.asset !== null && existsSync(r.asset.filePath);
+        const isVideoMode =
+          r.segment.mode === "broll-pip" ||
+          r.segment.mode === "broll-fullscreen" ||
+          r.segment.mode === "broll-text";
+        return isVideoMode && (hasLocal || hasPexels);
+      })
+      .map((r) => ({ start: r.segment.startSec, end: r.segment.endSec }));
     if (captionStyle === "animated") {
-      await generateAnimatedCaptionsAss(wordTimings, captionAssPath, outW, outH, accentColor, lowerH);
+      await generateAnimatedCaptionsAss(wordTimings, captionAssPath, outW, outH, accentColor, lowerH, brollRanges);
     } else {
-      await generateStaticCaptionsAss(wordTimings, captionAssPath, outW, outH, lowerH);
+      await generateStaticCaptionsAss(wordTimings, captionAssPath, outW, outH, lowerH, brollRanges);
     }
-    logger.info({ captionStyle, wordCount: wordTimings.length }, "Caption ASS generated");
+    logger.info({ captionStyle, wordCount: wordTimings.length, brollWindows: brollRanges.length }, "Caption ASS generated");
   }
 
   // ── Opening hook text ASS ──
@@ -1060,12 +1096,15 @@ export async function postProcessAvatarVideo(
   // a video overlay (broll-pip or broll-fullscreen). Stat-popin segments are
   // handed off to T103's numeric-callout renderer, not this engine.
   // Each kept resource earns one ffmpeg input slot (inputIdx wired below).
-  const renderableBroll = (options.brollResources ?? []).filter(
-    (r) =>
-      r.asset !== null &&
-      existsSync(r.asset.filePath) &&
-      (r.segment.mode === "broll-pip" || r.segment.mode === "broll-fullscreen")
-  );
+  const renderableBroll = (options.brollResources ?? []).filter((r) => {
+    const hasLocal = !!(r.localClipPath && existsSync(r.localClipPath));
+    const hasPexels = r.asset !== null && existsSync(r.asset.filePath);
+    const isVideoMode =
+      r.segment.mode === "broll-pip" ||
+      r.segment.mode === "broll-fullscreen" ||
+      r.segment.mode === "broll-text";
+    return isVideoMode && (hasLocal || hasPexels);
+  });
   if (renderableBroll.length > 0) {
     logger.info(
       {
@@ -1175,7 +1214,10 @@ export async function postProcessAvatarVideo(
     // of the "audio always muted" invariant).
     const brollInputIndices: number[] = [];
     for (const r of renderableBroll) {
-      cmd = cmd.input(r.asset!.filePath).inputOptions(["-an"]);
+      // Use the locally-generated animated text clip if available (broll-text);
+      // otherwise fall back to the Pexels asset.
+      const clipPath = r.localClipPath ?? r.asset!.filePath;
+      cmd = cmd.input(clipPath).inputOptions(["-an"]);
       brollInputIndices.push(inputIndex++);
     }
 
@@ -1413,36 +1455,21 @@ export async function postProcessAvatarVideo(
       const startSec = Math.max(0, Math.min(seg.startSec, duration));
       const endSec = Math.max(startSec + 0.1, Math.min(seg.endSec, duration));
       const outLabel = `with_broll_${i}`;
-      if (seg.mode === "broll-pip") {
-        fp.push(
-          ...buildBrollPipFilter({
-            brollInputIdx: inputIdx,
-            startSec,
-            endSec,
-            outW,
-            outH,
-            isVertical,
-            inputLabel: lastV,
-            outputLabel: outLabel,
-            uniqueTag: String(i),
-            frameColor: options.primaryColor,
-          })
-        );
-      } else {
-        // broll-fullscreen
-        fp.push(
-          ...buildBrollFullscreenFilter({
-            brollInputIdx: inputIdx,
-            startSec,
-            endSec,
-            outW,
-            outH,
-            inputLabel: lastV,
-            outputLabel: outLabel,
-            uniqueTag: String(i),
-          })
-        );
-      }
+      // All b-roll modes render fullscreen: broll-fullscreen (Pexels),
+      // broll-text (animated text MP4 from animatedTextService), and
+      // legacy broll-pip (treated as fullscreen — PIP is disabled).
+      fp.push(
+        ...buildBrollFullscreenFilter({
+          brollInputIdx: inputIdx,
+          startSec,
+          endSec,
+          outW,
+          outH,
+          inputLabel: lastV,
+          outputLabel: outLabel,
+          uniqueTag: String(i),
+        })
+      );
       lastV = outLabel;
     }
 

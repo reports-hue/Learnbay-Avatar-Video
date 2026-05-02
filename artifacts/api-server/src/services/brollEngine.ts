@@ -41,6 +41,8 @@ export interface BrollResource {
   segment: Segment;
   /** null when Pexels lookup failed or mode doesn't need a video. */
   asset: PexelsAsset | null;
+  /** Set for broll-text segments — path to the locally generated animated text MP4. */
+  localClipPath?: string;
 }
 
 export interface FetchBrollOptions {
@@ -48,6 +50,8 @@ export interface FetchBrollOptions {
   isVertical: boolean;
   /** Where Pexels caches MP4s. Pass through from outputsDir/cache/pexels. */
   cacheDir: string;
+  /** Brand accent color for animated text clip glow (e.g. "#4A9FFF"). */
+  accentColor?: string;
 }
 
 // ─────────────────────────────────────────────
@@ -67,11 +71,41 @@ export interface FetchBrollOptions {
 export async function fetchBrollResources(
   opts: FetchBrollOptions
 ): Promise<BrollResource[]> {
-  const { segments, isVertical, cacheDir } = opts;
+  const { segments, isVertical, cacheDir, accentColor = "#4488ff" } = opts;
   const orientation = isVertical ? "portrait" : "landscape";
+  // Dimensions for animated text clips — match the avatar render resolution.
+  const [outW, outH] = isVertical ? [1080, 1920] : [1920, 1080];
+  // Animated text clips cached separately from Pexels clips.
+  const animTextCacheDir = path.join(path.dirname(cacheDir), "anim_text");
   const out: BrollResource[] = [];
 
   for (const seg of segments) {
+    // ── broll-text: generate an animated text screen locally ──
+    if (seg.mode === "broll-text") {
+      const phrase = seg.keyPhrase ?? seg.concept ?? "";
+      if (!phrase.trim()) {
+        logger.warn(
+          { startSec: seg.startSec, endSec: seg.endSec },
+          "broll-text segment has no keyPhrase — skipping"
+        );
+        out.push({ segment: seg, asset: null });
+        continue;
+      }
+      const { generateAnimatedTextClip } = await import("./animatedTextService.js");
+      const durationSec = Math.max(1, seg.endSec - seg.startSec);
+      const localClipPath = await generateAnimatedTextClip({
+        text: phrase,
+        durationSec,
+        width: outW,
+        height: outH,
+        accentColor,
+        cacheDir: animTextCacheDir,
+      });
+      out.push({ segment: seg, asset: null, localClipPath: localClipPath ?? undefined });
+      continue;
+    }
+
+    // ── broll-pip / broll-fullscreen: fetch from Pexels ──
     if (seg.mode !== "broll-pip" && seg.mode !== "broll-fullscreen") {
       out.push({ segment: seg, asset: null });
       continue;
@@ -81,8 +115,6 @@ export async function fetchBrollResources(
       continue;
     }
     const segDur = seg.endSec - seg.startSec;
-    // Need a clip at least segment-long (with 0.5s safety floor for fade).
-    // Floor of 2s prevents asking Pexels for absurdly short clips.
     const minDur = Math.max(2, Math.ceil(segDur + 0.5));
     const asset = await searchVideo({
       query: seg.concept,

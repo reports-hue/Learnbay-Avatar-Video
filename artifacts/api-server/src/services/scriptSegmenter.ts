@@ -52,8 +52,9 @@ const client = new OpenAI({
 // ── Schema ──
 
 export const SegmentModeEnum = z.enum([
-  "broll-pip",
+  "broll-pip",          // legacy — treated as fullscreen in renderer
   "broll-fullscreen",
+  "broll-text",         // animated text screen (dark bg + glowing key phrase)
   "stat-popin",
   "none",
 ]);
@@ -63,10 +64,12 @@ export const SegmentSchema = z.object({
   startSec: z.number().min(0),
   endSec: z.number().min(0),
   mode: SegmentModeEnum,
-  /** 2-4 word stock-footage query, e.g. "data dashboard". Null when mode=none/stat-popin. */
+  /** 2-4 word stock-footage query. Required for broll-pip/broll-fullscreen. Null otherwise. */
   concept: z.string().nullable(),
-  /** The literal word(s) to emphasize, used by stat-popin renderer. Null when mode=broll-*. */
+  /** The literal word(s) to emphasize for stat-popin. Null for broll-* modes. */
   emphasisText: z.string().nullable(),
+  /** 2-5 word key phrase to display for broll-text animated screens. Null otherwise. */
+  keyPhrase: z.string().nullable().optional(),
 });
 export type Segment = z.infer<typeof SegmentSchema>;
 
@@ -133,25 +136,29 @@ export function validateStatPopins(segments: Segment[], wordTimings: WordTiming[
 
 interface BudgetOptions {
   durationSec: number;
-  /** Max segments per 6 seconds (default). Tunable for very long videos. */
-  maxSegmentsPer6Sec?: number;
-  /** Max total broll fraction of duration (default 0.35). */
+  /** Max segments per 5 seconds (default). */
+  maxSegmentsPer5Sec?: number;
+  /** Max total broll fraction of duration (default 0.65 — 60-70% of video). */
   maxBrollFraction?: number;
 }
+
+const isBrollMode = (s: Segment) =>
+  s.mode === "broll-pip" ||
+  s.mode === "broll-fullscreen" ||
+  s.mode === "broll-text";
 
 /**
  * Enforce time/count budgets on a segment list. Mutates only by FILTERING —
  * never reshapes individual segments. Strategy:
  *   1. Sort by start time
  *   2. Drop overlapping segments (keep the earlier one)
- *   3. Drop "none" mode entries (they're explicit no-ops, no point passing on)
- *   4. Cap broll-* total time at maxBrollFraction * durationSec by greedily
- *      keeping shorter ones first (preserves visual rhythm vs. one huge one)
- *   5. Cap segment count at floor(durationSec / 6)
+ *   3. Drop "none" mode entries (they're explicit no-ops)
+ *   4. Cap broll-* total time at maxBrollFraction * durationSec (greedy)
+ *   5. Cap segment count at floor(durationSec / 5)
  */
 export function enforceBudget(segments: Segment[], opts: BudgetOptions): Segment[] {
-  const { durationSec, maxSegmentsPer6Sec = 1, maxBrollFraction = 0.35 } = opts;
-  const maxCount = Math.max(1, Math.floor((durationSec / 6) * maxSegmentsPer6Sec));
+  const { durationSec, maxSegmentsPer5Sec = 1, maxBrollFraction = 0.65 } = opts;
+  const maxCount = Math.max(2, Math.floor((durationSec / 5) * maxSegmentsPer5Sec));
   const maxBrollSec = durationSec * maxBrollFraction;
 
   // 1. Sort + clamp times
@@ -175,11 +182,10 @@ export function enforceBudget(segments: Segment[], opts: BudgetOptions): Segment
     }
   }
 
-  // 3. Cap broll-* total time
+  // 3. Cap broll-* total time (broll-pip, broll-fullscreen, broll-text)
   let brollTotal = 0;
-  // Greedy: shorter broll segments first so we can fit more
   const brolls = nonOverlap
-    .filter((s) => s.mode === "broll-pip" || s.mode === "broll-fullscreen")
+    .filter(isBrollMode)
     .slice()
     .sort((a, b) => (a.endSec - a.startSec) - (b.endSec - b.startSec));
   const keptBrollIds = new Set<number>();
@@ -191,14 +197,11 @@ export function enforceBudget(segments: Segment[], opts: BudgetOptions): Segment
     }
   }
   const afterBrollCap = nonOverlap.filter((s, i) => {
-    if (s.mode === "broll-pip" || s.mode === "broll-fullscreen") {
-      return keptBrollIds.has(i);
-    }
+    if (isBrollMode(s)) return keptBrollIds.has(i);
     return true;
   });
 
-  // 4. Cap total count (preserve order — drop from the END so the start of the
-  // video keeps its energy)
+  // 4. Cap total count (drop from END to preserve opening energy)
   const capped = afterBrollCap.slice(0, maxCount);
 
   return capped;
@@ -226,7 +229,8 @@ function cacheKey(input: {
   h.update(input.duration.toFixed(2));
   // Bump this when prompt or schema changes meaningfully so old caches are invalidated.
   // v2: added server-side stat-popin numeric validation + shortened intro lockout to 1.0s.
-  h.update("|v2");
+  // v3: added broll-text mode, fullscreen-only pattern, 65% b-roll budget.
+  h.update("|v3");
   return h.digest("hex");
 }
 
@@ -277,10 +281,16 @@ function buildPrompt(input: {
   }
   flush();
 
-  const maxBrollSec = (input.duration * 0.35).toFixed(1);
-  const maxSegments = Math.max(1, Math.floor(input.duration / 6));
+  const maxBrollSec = (input.duration * 0.65).toFixed(1);
+  const maxSegments = Math.max(2, Math.floor(input.duration / 5));
 
-  return `You are a senior video editor planning B-roll cutaways for a ${input.platform} video.
+  return `You are a senior video editor for a viral YouTube Shorts channel. Plan the B-roll cutaway schedule for a ${input.platform} video following the EXACT pattern used by professional viral Shorts creators:
+
+PATTERN (follow this structure strictly):
+→ Avatar speaks FULL SCREEN for 3–6 seconds
+→ CUT to a full-screen visual (4–8 seconds)
+→ CUT back to avatar FULL SCREEN
+→ Repeat — total cutaway time must be 60–70% of the video
 
 THE SCRIPT (chunked with timestamps):
 ${lines.join("\n")}
@@ -288,31 +298,38 @@ ${lines.join("\n")}
 VIDEO META:
 - Style: ${input.style}
 - Total duration: ${input.duration.toFixed(2)} seconds
-- Hard budget: ≤ ${maxSegments} total cutaway segments, ≤ ${maxBrollSec}s total B-roll time
-- AVATAR ANCHOR RULE: the speaker on camera is the anchor — most B-roll should be PiP corner inserts. Use FULLSCREEN B-roll sparingly (max 1, only on very visual moments like "imagine X").
+- Hard budget: ≤ ${maxSegments} cutaway segments; target ≥ ${maxBrollSec}s total b-roll time
 
-For each "moment" in the script that would benefit from a visual cutaway, output ONE entry:
+CUTAWAY TYPES — use ONLY these three:
 
-- "broll-pip"        — small corner-of-screen video clip during the segment. Use for concrete nouns (product, place, activity).
-- "broll-fullscreen" — full-frame B-roll replacing the avatar briefly. Use SPARINGLY for high-impact "imagine"/"picture this" moments.
-- "stat-popin"       — animated number/percentage callout. Use whenever the script says a number, percentage, dollar amount, or "X times more".
-- (no entry)         — for talking-head sections without a visual hook.
+"broll-text" — ANIMATED TEXT SCREEN
+  Full-screen dark background with large glowing white key phrase.
+  Use for: powerful hooks, defining statements, key numbers, memorable phrases.
+  REQUIRED: "keyPhrase" = exact 2–5 words from the script to display as animated glowing text.
+  Set "concept" to null. Set "emphasisText" to null.
 
-Each entry MUST include:
-- "startSec", "endSec": align to chunk boundaries from the script above. Segments cannot overlap.
-- "mode": one of the four above
-- "concept": a 2-4 word stock-footage search query (lowercase, no quotes). REQUIRED for broll-pip / broll-fullscreen, set to null for stat-popin.
-- "emphasisText": the exact word(s) being emphasized (for stat-popin only). Set to null for broll-* modes.
+"broll-fullscreen" — PEXELS VIDEO CLIP
+  Full-screen realistic footage matching what is being said at that moment.
+  Use for: concrete scenarios, workplaces, people working, activities.
+  REQUIRED: "concept" = 2–4 word Pexels search query (e.g. "student laptop study", "professional office dashboard").
+  Set "keyPhrase" to null. Set "emphasisText" to null.
 
-CRITICAL RULES:
-- Never place a segment in the FIRST 1.0 seconds (intro sting blackout).
-- Never place a segment in the LAST 2.5 seconds (outro CTA card).
+"stat-popin" — ANIMATED NUMBER CALLOUT
+  Small animated callout for a numeric stat.
+  Use only when a number, %, or dollar amount is spoken.
+  REQUIRED: "emphasisText" = the exact numeric word(s). Set "concept" to null. Set "keyPhrase" to null.
+
+RULES:
+- ALTERNATE broll-text and broll-fullscreen for visual rhythm (avoid 3 of the same type consecutively).
+- NEVER use broll-pip — it is completely disabled.
+- Each broll-text / broll-fullscreen segment MUST be 4–8 seconds long.
+- stat-popin segments: 0.6–1.2 seconds only.
+- Segments cannot overlap.
+- Never place a segment in the FIRST 1.0 seconds or the LAST 2.5 seconds.
 - Stat-popin MUST coincide with a numeric word actually present in the script.
-- Broll-pip segments should be 1.5-3s long; broll-fullscreen 2-4s; stat-popin 0.6-1.2s.
-- If the script has no obvious visual hooks, return ZERO segments. It's better to ship clean than to force B-roll.
 
-Return ONLY a JSON object in this exact shape (no markdown, no commentary):
-{"segments":[{"startSec":4.20,"endSec":6.10,"mode":"broll-pip","concept":"data dashboard","emphasisText":null}]}`;
+Return ONLY valid JSON (no markdown, no commentary):
+{"segments":[{"startSec":4.0,"endSec":8.5,"mode":"broll-text","concept":null,"keyPhrase":"next big wave","emphasisText":null},{"startSec":13.0,"endSec":19.0,"mode":"broll-fullscreen","concept":"professional office screens","keyPhrase":null,"emphasisText":null}]}`;
 }
 
 // ── Public API ──

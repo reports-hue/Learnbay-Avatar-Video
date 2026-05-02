@@ -366,7 +366,10 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
             // share the same plan but emit independent ASS/filter graphs.
             statPopinSegments = plan.segments.filter((s) => s.mode === "stat-popin");
             const brollSegments = plan.segments.filter(
-              (s) => s.mode === "broll-pip" || s.mode === "broll-fullscreen"
+              (s) =>
+                s.mode === "broll-pip" ||
+                s.mode === "broll-fullscreen" ||
+                s.mode === "broll-text"
             );
             if (brollSegments.length > 0) {
               updateJob(jobId, {
@@ -378,6 +381,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
                 segments: brollSegments,
                 isVertical: brollIsVertical,
                 cacheDir: path.join(outputsDir, "cache", "pexels"),
+                accentColor: resolvedAccent,
               });
             }
             if (statPopinSegments.length > 0) {
