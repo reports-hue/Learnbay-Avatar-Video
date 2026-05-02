@@ -840,8 +840,14 @@ export async function postProcessAvatarVideo(
   const logoAspect = logoDims && logoDims.height > 0 ? logoDims.width / logoDims.height : 1.0;
 
   // ── Resolve music ──
-  const musicAssetPath = path.join(assetsDir, "music.mp3");
-  const musicPath = options.musicPath ?? (existsSync(musicAssetPath) ? musicAssetPath : null);
+  // Two built-in tracks; pick randomly per generation for variety.
+  const builtinTracks = ["music_1.mp3", "music_2.mp3"]
+    .map((f) => path.join(assetsDir, f))
+    .filter(existsSync);
+  const builtinMusic = builtinTracks.length > 0
+    ? builtinTracks[Math.floor(Math.random() * builtinTracks.length)]!
+    : (existsSync(path.join(assetsDir, "music.mp3")) ? path.join(assetsDir, "music.mp3") : null);
+  const musicPath = options.musicPath ?? builtinMusic;
 
   // ── Outro card state (T105) ──
   // When CTA is set AND duration is long enough (≥6s), the lower-third CTA is
@@ -1700,13 +1706,13 @@ export async function postProcessAvatarVideo(
       if (realism) {
         af.push(
           `[${speechSrcIdx}:a]${speechChain}[speech_e]`,
-          `[${musicIdx}:a]aformat=fltp:48000:stereo,volume=0.06,afade=t=in:st=0:d=1:curve=qua,afade=t=out:st=${musicFadeOut}:d=1.5:curve=qua[bg_music]`,
+          `[${musicIdx}:a]aformat=fltp:48000:stereo,volume=0.04,afade=t=in:st=0:d=1:curve=qua,afade=t=out:st=${musicFadeOut}:d=1.5:curve=qua[bg_music]`,
           `[speech_e][bg_music]amix=inputs=2:duration=first:normalize=0[aout]`
         );
       } else {
         af.push(
           `[${speechSrcIdx}:a]aformat=fltp:48000:stereo,volume=1.0[speech]`,
-          `[${musicIdx}:a]aformat=fltp:48000:stereo,volume=0.07[bg_music]`,
+          `[${musicIdx}:a]aformat=fltp:48000:stereo,volume=0.04[bg_music]`,
           `[speech][bg_music]amix=inputs=2:duration=first:normalize=0[aout]`
         );
       }
