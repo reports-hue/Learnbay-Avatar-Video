@@ -30,3 +30,21 @@ id = "EGHhnFDGlzwkKT1e56jm5"
 uri = "file://attached_assets/diagnostic/03_rendered_at_8s.jpg"
 type = "image"
 title = "Rendered video frame at 8s — badge gone, scene clean"
+
+[[outputs]]
+id = "yPtM0wh7KWIqmk0tmaPyp"
+uri = "file://attached_assets/diagnostic/audio/C_latest_video_audio.mp3"
+type = "audio"
+title = "C — Latest rendered video audio (20s) — does this match the typing you heard?"
+
+[[outputs]]
+id = "_uxDSgg2zNSv_Ll8q69vC"
+uri = "file://attached_assets/diagnostic/audio/D_video_music_only.mp3"
+type = "audio"
+title = "D — Same video with speech removed (>4kHz only) — typing sound isolated"
+
+[[outputs]]
+id = "YFUqZ6fhabw5PeROwSZF_"
+uri = "file://attached_assets/diagnostic/audio/E_music_1_FIXED_lowpass.mp3"
+type = "audio"
+title = "E — Proposed fix preview: music_1 with lowpass=6000 (no high-freq percussion)"
