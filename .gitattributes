@@ -6,3 +6,5 @@ artifacts/api-server/outputs/video_4baeb9fb5095.mp4 filter=lfs diff=lfs merge=lf
 artifacts/api-server/outputs/video_4ec9055667aa.mp4 filter=lfs diff=lfs merge=lfs -text
 artifacts/api-server/outputs/video_df567b6b72c4.mp4 filter=lfs diff=lfs merge=lfs -text
 artifacts/api-server/outputs/video_90d8d08f6ca0.mp4 filter=lfs diff=lfs merge=lfs -text
+artifacts/api-server/outputs/video_7b6487da543b.mp4 filter=lfs diff=lfs merge=lfs -text
+attached_assets/libraryminds-video_(2)_1777723264317.mp4 filter=lfs diff=lfs merge=lfs -text

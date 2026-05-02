@@ -370,8 +370,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
             const brollSegments = plan.segments.filter(
               (s) =>
                 s.mode === "broll-pip" ||
-                s.mode === "broll-fullscreen" ||
-                s.mode === "broll-text"
+                s.mode === "broll-fullscreen"
             );
             if (brollSegments.length > 0) {
               updateJob(jobId, {

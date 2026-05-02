@@ -80,28 +80,9 @@ export async function fetchBrollResources(
   const out: BrollResource[] = [];
 
   for (const seg of segments) {
-    // ── broll-text: generate an animated text screen locally ──
+    // ── broll-text: disabled — skip any that sneak through old caches ──
     if (seg.mode === "broll-text") {
-      const phrase = seg.keyPhrase ?? seg.concept ?? "";
-      if (!phrase.trim()) {
-        logger.warn(
-          { startSec: seg.startSec, endSec: seg.endSec },
-          "broll-text segment has no keyPhrase — skipping"
-        );
-        out.push({ segment: seg, asset: null });
-        continue;
-      }
-      const { generateAnimatedTextClip } = await import("./animatedTextService.js");
-      const durationSec = Math.max(1, seg.endSec - seg.startSec);
-      const localClipPath = await generateAnimatedTextClip({
-        text: phrase,
-        durationSec,
-        width: outW,
-        height: outH,
-        accentColor,
-        cacheDir: animTextCacheDir,
-      });
-      out.push({ segment: seg, asset: null, localClipPath: localClipPath ?? undefined });
+      logger.warn({ startSec: seg.startSec }, "broll-text segment skipped (disabled)");
       continue;
     }
 

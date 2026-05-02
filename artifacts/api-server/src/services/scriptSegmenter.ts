@@ -251,7 +251,8 @@ function cacheKey(input: {
   // v2: added server-side stat-popin numeric validation + shortened intro lockout to 1.0s.
   // v3: added broll-text mode, fullscreen-only pattern, 65% b-roll budget.
   // v4: enforced 3s minimum avatar gap in prompt + enforceBudget; first broll ≥ 2s.
-  h.update("|v4");
+  // v5: removed broll-text entirely — only broll-fullscreen (Pexels) cutaways.
+  h.update("|v5");
   return h.digest("hex");
 }
 
@@ -321,18 +322,12 @@ VIDEO META:
 - Total duration: ${input.duration.toFixed(2)} seconds
 - Hard budget: ≤ ${maxSegments} cutaway segments; target ≥ ${maxBrollSec}s total b-roll time
 
-CUTAWAY TYPES — use ONLY these three:
-
-"broll-text" — ANIMATED TEXT SCREEN
-  Full-screen dark background with large glowing white key phrase.
-  Use for: powerful hooks, defining statements, key numbers, memorable phrases.
-  REQUIRED: "keyPhrase" = exact 2–5 words from the script to display as animated glowing text.
-  Set "concept" to null. Set "emphasisText" to null.
+CUTAWAY TYPES — use ONLY these two:
 
 "broll-fullscreen" — PEXELS VIDEO CLIP
-  Full-screen realistic footage matching what is being said at that moment.
-  Use for: concrete scenarios, workplaces, people working, activities.
-  REQUIRED: "concept" = 2–4 word Pexels search query (e.g. "student laptop study", "professional office dashboard").
+  Full-screen realistic stock footage matching what is being said at that moment.
+  Use for: concrete scenarios, workplaces, people working, technology, activities.
+  REQUIRED: "concept" = 2–4 word Pexels search query (e.g. "student laptop study", "professional office dashboard", "team collaboration meeting").
   Set "keyPhrase" to null. Set "emphasisText" to null.
 
 "stat-popin" — ANIMATED NUMBER CALLOUT
@@ -341,17 +336,17 @@ CUTAWAY TYPES — use ONLY these three:
   REQUIRED: "emphasisText" = the exact numeric word(s). Set "concept" to null. Set "keyPhrase" to null.
 
 RULES:
-- ALTERNATE broll-text and broll-fullscreen for visual rhythm (avoid 3 of the same type consecutively).
-- NEVER use broll-pip — it is completely disabled.
-- Each broll-text / broll-fullscreen segment MUST be 4–8 seconds long.
+- Use ONLY broll-fullscreen for cutaways (no broll-text, no broll-pip — both are disabled).
+- Each broll-fullscreen segment MUST be 4–8 seconds long.
 - stat-popin segments: 0.6–1.2 seconds only.
 - Segments cannot overlap.
 - Never place a segment in the FIRST 2.0 seconds or the LAST 2.5 seconds.
-- Avatar MUST be visible for AT LEAST 3 seconds between any two consecutive cutaways. Never schedule two broll segments with less than 3 seconds of avatar time between them.
+- Avatar MUST be visible for AT LEAST 3 seconds between any two consecutive cutaways.
 - Stat-popin MUST coincide with a numeric word actually present in the script.
+- Choose VARIED and SPECIFIC Pexels queries — different concepts for each segment so footage is visually diverse.
 
 Return ONLY valid JSON (no markdown, no commentary):
-{"segments":[{"startSec":4.0,"endSec":8.5,"mode":"broll-text","concept":null,"keyPhrase":"next big wave","emphasisText":null},{"startSec":13.0,"endSec":19.0,"mode":"broll-fullscreen","concept":"professional office screens","keyPhrase":null,"emphasisText":null}]}`;
+{"segments":[{"startSec":4.0,"endSec":9.0,"mode":"broll-fullscreen","concept":"professional office teamwork","keyPhrase":null,"emphasisText":null},{"startSec":14.0,"endSec":20.0,"mode":"broll-fullscreen","concept":"laptop coding technology","keyPhrase":null,"emphasisText":null}]}`;
 }
 
 // ── Public API ──
