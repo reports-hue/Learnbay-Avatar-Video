@@ -421,8 +421,11 @@ async function generateAnimatedCaptionsAss(
   const isVertical = h > w;
   const baseFontSize = isVertical ? 52 : 42;
   const activeFontSize = isVertical ? 58 : 46;
-  const captionY = h - lowerH - (isVertical ? 160 : 120);
   const accentAss = toAssColor(accentColor);
+  // Alignment=2 → bottom-center; MarginV = distance from bottom edge in px.
+  // lowerH accounts for the lower-third strip so captions sit above it.
+  // ~180px extra for portrait / ~100px for landscape ≈ 1.5-inch visual gap.
+  const bottomMargin = lowerH + (isVertical ? 180 : 100);
 
   // Stable-chunk karaoke: group words into CHUNK-word blocks that stay
   // on screen for the entire group duration. Only the ACTIVE word changes
@@ -438,7 +441,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,${baseFontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,3,5,40,40,${captionY},1
+Style: Cap,Arial,${baseFontSize},&H00FFFFFF,${accentAss},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,3,2,40,40,${bottomMargin},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -492,7 +495,8 @@ async function generateStaticCaptionsAss(
 ): Promise<void> {
   const isVertical = h > w;
   const fontSize = isVertical ? 54 : 42;
-  const captionY = h - lowerH - (isVertical ? 140 : 110);
+  // Alignment=2 → bottom-center; MarginV = distance from bottom edge in px.
+  const bottomMargin = lowerH + (isVertical ? 180 : 100);
   const CHUNK = 3;
 
   const header = `[Script Info]
@@ -503,7 +507,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,3,5,40,40,${captionY},1
+Style: Cap,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,3,2,40,40,${bottomMargin},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -840,14 +844,10 @@ export async function postProcessAvatarVideo(
   const logoAspect = logoDims && logoDims.height > 0 ? logoDims.width / logoDims.height : 1.0;
 
   // ── Resolve music ──
-  // Two built-in tracks; pick randomly per generation for variety.
-  const builtinTracks = ["music_1.mp3", "music_2.mp3"]
-    .map((f) => path.join(assetsDir, f))
-    .filter(existsSync);
-  const builtinMusic = builtinTracks.length > 0
-    ? builtinTracks[Math.floor(Math.random() * builtinTracks.length)]!
-    : (existsSync(path.join(assetsDir, "music.mp3")) ? path.join(assetsDir, "music.mp3") : null);
-  const musicPath = options.musicPath ?? builtinMusic;
+  // Music is opt-in only — only used when the caller explicitly passes musicPath.
+  // Built-in tracks (music_1.mp3 / music_2.mp3) are available in src/assets/
+  // but are NOT auto-applied; the user must select background music in the UI.
+  const musicPath = options.musicPath ?? null;
 
   // ── Outro card state (T105) ──
   // When CTA is set AND duration is long enough (≥6s), the lower-third CTA is
@@ -1419,6 +1419,7 @@ export async function postProcessAvatarVideo(
             inputLabel: lastV,
             outputLabel: outLabel,
             uniqueTag: String(i),
+            frameColor: options.primaryColor,
           })
         );
       } else {

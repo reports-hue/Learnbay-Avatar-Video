@@ -191,6 +191,8 @@ export interface BrollPipFilterOptions {
   outputLabel: string; // next label for the chain
   /** Globally unique tag for intermediate labels (avoids collisions). */
   uniqueTag: string;
+  /** Optional border color for the frame ring (CSS hex, e.g. "#7C3AED"). Defaults to white. */
+  frameColor?: string;
 }
 
 /**
@@ -222,38 +224,55 @@ export function buildBrollPipFilter(opts: BrollPipFilterOptions): string[] {
     inputLabel,
     outputLabel,
     uniqueTag,
+    frameColor,
   } = opts;
   const pipSize = isVertical ? 320 : 360;
-  const radius = 28;
+  // Frame ring: 5px border on each side → total outer box is pipSize+10
+  const framePad = 5;
+  const outerSize = pipSize + framePad * 2;
+  // Inner video corner radius; outer frame corners are radius+framePad
+  const innerRadius = 20;
+  const outerRadius = innerRadius + framePad;
+  // Frame colour: convert CSS "#RRGGBB" → ffmpeg "0xRRGGBB", default white
+  const fc = frameColor ? frameColor.replace(/^#/, "0x") : "0xFFFFFF";
+
   // Position safely inside frame, leaving margin for logo (top-right) and
   // captions (bottom-center). Upper-left works for both orientations.
   const margin = isVertical ? Math.round(outW * 0.04) : Math.round(outW * 0.025);
-  const xPos = margin;
-  const yPos = margin + Math.round(outH * 0.10); // below logo line
+  // Outer overlay position: shift back by framePad so the VIDEO content
+  // lands at the same pixel as before (visual position unchanged).
+  const xPos = margin - framePad;
+  const yPos = margin + Math.round(outH * 0.10) - framePad;
 
   // Rounded-rectangle alpha formula for a W×H box, corner radius R:
-  //   dx = min(X, W-X)                   (distance to nearest vertical edge)
-  //   dy = min(Y, H-Y)                   (distance to nearest horizontal edge)
-  //   inside = (dx >= R) || (dy >= R)
-  //          || (hypot(R-dx, R-dy) <= R) (corner check)
-  // We use `+` between gte/lte calls as logical-OR — any non-zero sum → true.
-  // ALL commas inside the expression are escaped as \\, for the filtergraph
-  // parser (FFmpeg treats unescaped commas as filter separators even inside
-  // single quotes).
-  const alphaExpr =
-    `if(` +
-    `gte(min(X\\,W-X)\\,${radius})` +
-    `+gte(min(Y\\,H-Y)\\,${radius})` +
-    `+lte(hypot(${radius}-min(X\\,W-X)\\,${radius}-min(Y\\,H-Y))\\,${radius})` +
-    `\\,255\\,0)`;
+  //   dx = min(X, W-X) / dy = min(Y, H-Y) — distance to nearest edge
+  //   inside = (dx>=R) || (dy>=R) || (hypot(R-dx,R-dy)<=R)
+  // ALL commas inside the expression are escaped as \\, for the filtergraph.
+  function roundedAlpha(R: number) {
+    return (
+      `if(` +
+      `gte(min(X\\,W-X)\\,${R})` +
+      `+gte(min(Y\\,H-Y)\\,${R})` +
+      `+lte(hypot(${R}-min(X\\,W-X)\\,${R}-min(Y\\,H-Y))\\,${R})` +
+      `\\,255\\,0)`
+    );
+  }
 
-  const sIn = `pip_in_${uniqueTag}`;
-  const sRound = `pip_round_${uniqueTag}`;
+  const sIn      = `pip_in_${uniqueTag}`;
+  const sFrame   = `pip_frame_${uniqueTag}`;
+  const sRound   = `pip_round_${uniqueTag}`;
   const enableExpr = `'between(t\\,${startSec.toFixed(3)}\\,${endSec.toFixed(3)})'`;
 
   return [
-    `[${brollInputIdx}:v]setpts=PTS-STARTPTS+${startSec.toFixed(3)}/TB,scale=${pipSize}:${pipSize}:force_original_aspect_ratio=increase,crop=${pipSize}:${pipSize},setsar=1,format=rgba[${sIn}]`,
-    `[${sIn}]geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)':a='${alphaExpr}'[${sRound}]`,
+    // 1. Scale + square-crop the b-roll, shift PTS so clip starts from frame 0
+    `[${brollInputIdx}:v]setpts=PTS-STARTPTS+${startSec.toFixed(3)}/TB,` +
+      `scale=${pipSize}:${pipSize}:force_original_aspect_ratio=increase,` +
+      `crop=${pipSize}:${pipSize},setsar=1,format=rgba[${sIn}]`,
+    // 2. Pad with the frame colour on all sides → outer box with rounded corners
+    `[${sIn}]pad=${outerSize}:${outerSize}:${framePad}:${framePad}:${fc}[${sFrame}]`,
+    // 3. Apply rounded-corner mask to the OUTER (framed) box
+    `[${sFrame}]geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)':a='${roundedAlpha(outerRadius)}'[${sRound}]`,
+    // 4. Overlay the framed+rounded clip onto the base video
     `[${inputLabel}][${sRound}]overlay=${xPos}:${yPos}:format=auto:enable=${enableExpr}[${outputLabel}]`,
   ];
 }
