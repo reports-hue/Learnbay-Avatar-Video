@@ -15,6 +15,7 @@ run = "pnpm --filter @workspace/api-server run dev"
 [services.production]
 build = "pnpm --filter @workspace/video-generator run build && pnpm --filter @workspace/api-server run build"
 run = "node --enable-source-maps artifacts/api-server/dist/index.mjs"
+paths = ["/api", "/"]
 
 [services.production.env]
 PORT = "8080"
