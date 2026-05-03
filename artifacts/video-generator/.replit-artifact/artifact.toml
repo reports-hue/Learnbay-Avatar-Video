@@ -19,7 +19,7 @@ run = "pnpm --filter @workspace/video-generator run dev"
 
 [services.production]
 serve = "static"
-publicDir = "dist/public"
+publicDir = "artifacts/video-generator/dist/public"
 build = "pnpm --filter @workspace/video-generator run build"
 
 [services.env]
