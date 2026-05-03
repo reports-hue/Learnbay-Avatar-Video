@@ -17,14 +17,10 @@ localPort = 24396
 [services.development]
 run = "pnpm --filter @workspace/video-generator run dev"
 
-# NOTE: No [services.production] section by design. In production the
-# api-server (artifacts/api-server) is the sole deployable service and
-# also serves the pre-built React frontend from
-# artifacts/video-generator/dist/public (see api-server/src/app.ts lines
-# 43-49). The build for this package is invoked by api-server's
-# [services.production.build] command, so the static bundle is still
-# produced before the container starts. Removing [services.production]
-# here is what reduces the deployment to a single autoscale port.
+[services.production]
+serve = "static"
+publicDir = "dist/public"
+build = "pnpm --filter @workspace/video-generator run build"
 
 [services.env]
 PORT = "24396"
