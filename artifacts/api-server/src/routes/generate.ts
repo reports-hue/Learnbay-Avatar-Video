@@ -12,7 +12,7 @@ import * as jobStore from "../lib/jobStore.js";
 import type { JobState, JobResult } from "../lib/jobStore.js";
 import { generateScript, generateBrandTheme, researchCompanyForScript, type ScriptStyle } from "../services/openai.js";
 import { generateAvatarVideo, resolveAvatarStyle, getAvatarPose, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
-import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle } from "../services/ffmpegService.js";
+import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle, resolvedFfprobeBin } from "../services/ffmpegService.js";
 import { generateBackgroundImage } from "../services/imageGenerationService.js";
 import { getWordTimings } from "../services/speech.js";
 import { synthesizeElevenLabs } from "../services/elevenLabsService.js";
@@ -746,7 +746,7 @@ router.post(
 
     try {
       // ffprobe → real dimensions, so we can warn on aspect mismatch.
-      const probeOut = await execFileAsync("ffprobe", [
+      const probeOut = await execFileAsync(resolvedFfprobeBin, [
         "-v", "error",
         "-select_streams", "v:0",
         "-show_entries", "stream=width,height",

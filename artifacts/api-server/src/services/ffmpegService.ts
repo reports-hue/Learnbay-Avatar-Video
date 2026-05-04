@@ -1,5 +1,6 @@
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegPath from "ffmpeg-static";
+import ffprobeStatic from "ffprobe-static";
 import axios from "axios";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -95,6 +96,12 @@ if (selectedFfmpeg) {
     "[ffmpeg] no binary with drawtext support found — particles, swoosh, and other text-based overlays will fail. Set FFMPEG_PATH to a full FFmpeg build to fix."
   );
 }
+
+if (ffprobeStatic?.path) {
+  ffmpeg.setFfprobePath(ffprobeStatic.path);
+}
+
+export const resolvedFfprobeBin: string = ffprobeStatic?.path ?? "ffprobe";
 
 /**
  * Resolved ffmpeg binary path used by all out-of-band `spawn(...)` calls
