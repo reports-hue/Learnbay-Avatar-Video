@@ -268,43 +268,25 @@ type ParticleSpec = {
   ampX: number; ampY: number;    // drift amplitudes in px
 };
 
+// Particle counts halved vs original (14→7, 12→6) to reduce per-frame drawtext
+// evaluation + gblur cost in Cloud Run's memory-constrained environment.
 const LANDSCAPE_PARTICLES: ParticleSpec[] = [
-  // top edge (y ~ 0.10-0.18)
   { nx: 0.06, ny: 0.13, size: 14, opacity: 0.9,  freqX: 0.50, freqY: 0.30, ampX: 30, ampY: 20 },
-  { nx: 0.24, ny: 0.10, size: 10, opacity: 0.7,  freqX: 0.40, freqY: 0.35, ampX: 25, ampY: 18 },
   { nx: 0.43, ny: 0.16, size: 16, opacity: 0.85, freqX: 0.60, freqY: 0.45, ampX: 28, ampY: 22 },
-  { nx: 0.66, ny: 0.10, size: 12, opacity: 0.75, freqX: 0.50, freqY: 0.40, ampX: 32, ampY: 24 },
   { nx: 0.85, ny: 0.16, size: 13, opacity: 0.80, freqX: 0.55, freqY: 0.50, ampX: 28, ampY: 20 },
-  // left column (x ~ 0.05-0.13)
-  { nx: 0.10, ny: 0.42, size: 11, opacity: 0.65, freqX: 0.45, freqY: 0.55, ampX: 30, ampY: 25 },
   { nx: 0.06, ny: 0.62, size: 13, opacity: 0.70, freqX: 0.50, freqY: 0.40, ampX: 26, ampY: 22 },
-  // right column (x ~ 0.85-0.95)
   { nx: 0.91, ny: 0.38, size: 12, opacity: 0.70, freqX: 0.50, freqY: 0.55, ampX: 28, ampY: 24 },
-  { nx: 0.88, ny: 0.58, size: 10, opacity: 0.65, freqX: 0.45, freqY: 0.40, ampX: 24, ampY: 22 },
-  // bottom edge (y ~ 0.85-0.95)
   { nx: 0.10, ny: 0.86, size: 15, opacity: 0.80, freqX: 0.60, freqY: 0.40, ampX: 25, ampY: 18 },
-  { nx: 0.31, ny: 0.92, size: 11, opacity: 0.65, freqX: 0.50, freqY: 0.55, ampX: 28, ampY: 20 },
-  { nx: 0.50, ny: 0.88, size: 10, opacity: 0.70, freqX: 0.50, freqY: 0.60, ampX: 28, ampY: 22 },
   { nx: 0.71, ny: 0.93, size: 12, opacity: 0.85, freqX: 0.45, freqY: 0.55, ampX: 30, ampY: 24 },
-  { nx: 0.89, ny: 0.85, size: 9,  opacity: 0.65, freqX: 0.55, freqY: 0.45, ampX: 24, ampY: 20 },
 ];
 
 const VERTICAL_PARTICLES: ParticleSpec[] = [
-  // top band, broadly above the avatar (y ~ 0.04-0.18)
   { nx: 0.08, ny: 0.06, size: 13, opacity: 0.85, freqX: 0.50, freqY: 0.35, ampX: 28, ampY: 20 },
-  { nx: 0.28, ny: 0.12, size: 11, opacity: 0.70, freqX: 0.40, freqY: 0.45, ampX: 26, ampY: 22 },
   { nx: 0.46, ny: 0.05, size: 16, opacity: 0.85, freqX: 0.60, freqY: 0.40, ampX: 30, ampY: 24 },
-  { nx: 0.66, ny: 0.13, size: 12, opacity: 0.75, freqX: 0.50, freqY: 0.50, ampX: 28, ampY: 22 },
   { nx: 0.85, ny: 0.07, size: 10, opacity: 0.65, freqX: 0.45, freqY: 0.40, ampX: 24, ampY: 20 },
-  { nx: 0.50, ny: 0.17, size: 14, opacity: 0.80, freqX: 0.55, freqY: 0.55, ampX: 28, ampY: 24 },
-  // left column (x ~ 0.04-0.12), in lower half but on the edge so not on face
   { nx: 0.06, ny: 0.34, size: 12, opacity: 0.70, freqX: 0.45, freqY: 0.50, ampX: 22, ampY: 24 },
-  { nx: 0.08, ny: 0.58, size: 10, opacity: 0.65, freqX: 0.50, freqY: 0.40, ampX: 24, ampY: 22 },
   { nx: 0.05, ny: 0.78, size: 13, opacity: 0.75, freqX: 0.55, freqY: 0.45, ampX: 22, ampY: 20 },
-  // right column (x ~ 0.88-0.96)
-  { nx: 0.93, ny: 0.32, size: 11, opacity: 0.70, freqX: 0.50, freqY: 0.50, ampX: 24, ampY: 22 },
-  { nx: 0.90, ny: 0.55, size: 13, opacity: 0.75, freqX: 0.45, freqY: 0.40, ampX: 26, ampY: 24 },
-  { nx: 0.95, ny: 0.80, size: 10, opacity: 0.65, freqX: 0.55, freqY: 0.55, ampX: 22, ampY: 20 },
+  { nx: 0.93, ny: 0.55, size: 13, opacity: 0.75, freqX: 0.45, freqY: 0.40, ampX: 26, ampY: 24 },
 ];
 
 function buildAmbientParticlesFilter(
@@ -1309,7 +1291,9 @@ export async function postProcessAvatarVideo(
       // AI-generated or user-supplied background image: scale to oversized, loop for duration
       fp.push(`[${bgImgIdx}:v]scale=${outW103}:${outH103}:force_original_aspect_ratio=increase,crop=${outW103}:${outH103},loop=loop=-1:size=1:start=0,setpts=PTS-STARTPTS,fps=30,trim=duration=${bgDur}[bg_raw]`);
     } else if (useGradient) {
-      fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=30[bg_raw]`);
+      // rate=1: this gradient is static (no time-varying params) — one frame held/repeated
+      // saves ~9 GB of redundant frame data vs rate=30 for a 45s video.
+      fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=1[bg_raw]`);
     } else {
       fp.push(`color=c=${bgHex}:s=${outW103}x${outH103}:r=30:d=${bgDur}[bg_raw]`);
     }
@@ -1886,16 +1870,22 @@ export async function postProcessAvatarVideo(
       "-map [aout]",
       `-t ${duration}`,
       "-c:v libx264",
-      // `preset fast` keeps render time reasonable (~30–60s for a 45s clip).
-      // The CRF=18 improvement is what actually drives the quality boost — preset
-      // mostly controls file size at a given quality. `medium` made renders feel broken.
-      "-preset fast",
+      // veryfast: significantly lower CPU and memory vs fast, acceptable quality for
+      // short social clips. CRF=18 still drives quality; preset mainly affects
+      // motion-estimation buffer size (veryfast = much smaller).
+      "-preset veryfast",
       "-crf 18",
+      // Hard bitrate ceiling per project spec (4000kbps). Also caps VBV buffer memory.
+      "-maxrate 4000k",
+      "-bufsize 8000k",
       "-profile:v high",
       "-level 4.1",
       "-g 60",
       "-keyint_min 60",
       "-sc_threshold 0",
+      // Limit thread count: fewer threads = smaller per-thread frame buffers.
+      // 2 threads is enough for 1080p in Cloud Run's single-vCPU environment.
+      "-threads 2",
       "-c:a aac",
       "-b:a 192k",
       "-ar 48000",
