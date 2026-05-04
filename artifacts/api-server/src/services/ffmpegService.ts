@@ -268,25 +268,18 @@ type ParticleSpec = {
   ampX: number; ampY: number;    // drift amplitudes in px
 };
 
-// Particle counts halved vs original (14→7, 12→6) to reduce per-frame drawtext
-// evaluation + gblur cost in Cloud Run's memory-constrained environment.
+// Particle count reduced to 3 per orientation (was 14/12 → 7/6 → 3/3) to cut per-frame
+// drawtext evaluation cost on Cloud Run's single-vCPU environment.
 const LANDSCAPE_PARTICLES: ParticleSpec[] = [
   { nx: 0.06, ny: 0.13, size: 14, opacity: 0.9,  freqX: 0.50, freqY: 0.30, ampX: 30, ampY: 20 },
-  { nx: 0.43, ny: 0.16, size: 16, opacity: 0.85, freqX: 0.60, freqY: 0.45, ampX: 28, ampY: 22 },
-  { nx: 0.85, ny: 0.16, size: 13, opacity: 0.80, freqX: 0.55, freqY: 0.50, ampX: 28, ampY: 20 },
-  { nx: 0.06, ny: 0.62, size: 13, opacity: 0.70, freqX: 0.50, freqY: 0.40, ampX: 26, ampY: 22 },
-  { nx: 0.91, ny: 0.38, size: 12, opacity: 0.70, freqX: 0.50, freqY: 0.55, ampX: 28, ampY: 24 },
-  { nx: 0.10, ny: 0.86, size: 15, opacity: 0.80, freqX: 0.60, freqY: 0.40, ampX: 25, ampY: 18 },
-  { nx: 0.71, ny: 0.93, size: 12, opacity: 0.85, freqX: 0.45, freqY: 0.55, ampX: 30, ampY: 24 },
+  { nx: 0.46, ny: 0.05, size: 16, opacity: 0.85, freqX: 0.60, freqY: 0.40, ampX: 30, ampY: 24 },
+  { nx: 0.85, ny: 0.07, size: 10, opacity: 0.65, freqX: 0.45, freqY: 0.40, ampX: 24, ampY: 20 },
 ];
 
 const VERTICAL_PARTICLES: ParticleSpec[] = [
   { nx: 0.08, ny: 0.06, size: 13, opacity: 0.85, freqX: 0.50, freqY: 0.35, ampX: 28, ampY: 20 },
   { nx: 0.46, ny: 0.05, size: 16, opacity: 0.85, freqX: 0.60, freqY: 0.40, ampX: 30, ampY: 24 },
   { nx: 0.85, ny: 0.07, size: 10, opacity: 0.65, freqX: 0.45, freqY: 0.40, ampX: 24, ampY: 20 },
-  { nx: 0.06, ny: 0.34, size: 12, opacity: 0.70, freqX: 0.45, freqY: 0.50, ampX: 22, ampY: 24 },
-  { nx: 0.05, ny: 0.78, size: 13, opacity: 0.75, freqX: 0.55, freqY: 0.45, ampX: 22, ampY: 20 },
-  { nx: 0.93, ny: 0.55, size: 13, opacity: 0.75, freqX: 0.45, freqY: 0.40, ampX: 26, ampY: 24 },
 ];
 
 function buildAmbientParticlesFilter(
@@ -316,13 +309,12 @@ function buildAmbientParticlesFilter(
   });
 
   // sigma=2 (5×5 kernel) vs original sigma=11 (23×23): ~20x cheaper per frame.
-  // The slight softness is sufficient; heavy bokeh blur was the primary CPU bottleneck
-  // on Cloud Run's single-vCPU environment (caused 0.3 fps → SIGKILL).
-  // r=15: particle drift is slow-moving, 15fps is indistinguishable from 30fps for these.
+  // r=4: particles drift slowly — 4fps is visually indistinguishable, cuts particle
+  // frame generation by 7.5x vs the original r=30.
   return [
     // Particle layer: black canvas + N drifting bullet glyphs + light blur,
     // forced into RGB so screen-blend doesn't shift chroma.
-    `color=c=black:s=${outW}x${outH}:r=15:d=${durationSec.toFixed(2)},${drawtexts.join(",")},gblur=sigma=2,format=gbrp[parts]`,
+    `color=c=black:s=${outW}x${outH}:r=4:d=${durationSec.toFixed(2)},${drawtexts.join(",")},gblur=sigma=2,format=gbrp[parts]`,
     // Force bg into RGB, screen-blend particles, convert back to YUV for downstream filters.
     `[${inputLabel}]format=gbrp[bg_rgb]`,
     `[bg_rgb][parts]blend=all_mode=screen:all_opacity=0.65,format=yuv420p[${outputLabel}]`,
@@ -1076,7 +1068,7 @@ export async function postProcessAvatarVideo(
       outroLockoutSec: 2.5,   // avoid the CTA outro card
       totalDuration: duration,
       minGapSec: 1.2,         // never fire two leaks within 1.2s
-      maxCount: 12,           // cap filter graph complexity
+      maxCount: 3,            // cap filter graph complexity (was 12; each leak = extra overlay pass)
     });
     if (leakEvents.length > 0) {
       const leakCacheDir = path.join(outputsDir, "cache", "leaks");
@@ -1110,7 +1102,7 @@ export async function postProcessAvatarVideo(
       const beatResult = await detectBeats(musicPath, {
         videoDurationSec: duration,
         tileToVideoDuration: true,
-        maxBeats: 64,
+        maxBeats: 8,           // was 64; each beat = an eq filter pass on the bg layer
       });
       // Filter beats out of the T104 intro sting window (0 - 1.6s) where the
       // blackout would mask any pulse anyway, and out of the T105 outro card
@@ -1295,7 +1287,7 @@ export async function postProcessAvatarVideo(
       // saves ~9 GB of redundant frame data vs rate=30 for a 45s video.
       fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=1[bg_raw]`);
     } else {
-      fp.push(`color=c=${bgHex}:s=${outW103}x${outH103}:r=30:d=${bgDur}[bg_raw]`);
+      fp.push(`color=c=${bgHex}:s=${outW103}x${outH103}:r=1:d=${bgDur}[bg_raw]`);
     }
 
     // ── 2. Cinematic radial glow overlay — accent-colored "key light" behind avatar ──
@@ -1319,12 +1311,11 @@ export async function postProcessAvatarVideo(
       `[bg_raw][glow_src]blend=all_mode=screen:all_opacity=${glowIntensity}[bg_lit]`
     );
 
-    // ── 3. Ken Burns effect on background (subtle 3% zoom + slow pan) ──
-    if (realism) {
-      fp.push(`[bg_lit]crop=${outW}:${outH}:x='min(iw-ow\\,(iw-ow)*t/${duration})':y='(ih-oh)/2'[bg_pre]`);
-    } else {
-      fp.push(`[bg_lit]crop=${outW}:${outH}:x='(iw-ow)/2':y='(ih-oh)/2'[bg_pre]`);
-    }
+    // ── 3. Background crop (Ken Burns removed) ──
+    // Ken Burns used a time-varying `t` expression re-evaluated every frame —
+    // significant CPU cost for a 3% zoom barely perceptible on mobile. Static
+    // center crop instead; saves ~5–10% CPU on the single-vCPU Cloud Run instance.
+    fp.push(`[bg_lit]crop=${outW}:${outH}:x='(iw-ow)/2':y='(ih-oh)/2'[bg_pre]`);
 
     // ── 3b. Always-on ambient particles (T101) ──
     // Soft drifting bokeh in safe zones (avoids avatar face area). Adds energy
@@ -1455,17 +1446,15 @@ export async function postProcessAvatarVideo(
       }
     }
 
-    // ── 4. Color grade + cinematic sharpening ──
-    // Vignette was removed: it created a visible curved dark arc at the bottom
-    // of the avatar frame that users perceived as the avatar being "cut off".
+    // ── 4. Color grade ──
+    // unsharp removed from both paths: a 5×5 convolution on 1080×1920 at 30fps
+    // consumed ~600M multiply-adds/sec — the dominant CPU bottleneck on Cloud Run's
+    // single-vCPU instance. Visually imperceptible on compressed social video.
     if (realism) {
       fp.push(`[${lastV}]eq=brightness=0.02:saturation=1.1:contrast=1.05[graded]`);
-      fp.push(`[graded]unsharp=3:3:0.6:3:3:0.0[sharpened]`);
-      lastV = "sharpened";
-    } else {
-      fp.push(`[${lastV}]unsharp=5:5:0.8:5:5:0[sharpened]`);
-      lastV = "sharpened";
+      lastV = "graded";
     }
+    // Non-realism: pass-through, no grade needed.
 
     // ── 5. Subtle lower-third gradient (single very-soft layer) ──
     // Removed the second darker layer + the brand accent bar — both showed
@@ -1709,11 +1698,9 @@ export async function postProcessAvatarVideo(
       // Swoosh removed — no longer applied to lastV.
     }
 
-    // ── 11. Film grain (after all overlays, for organic texture) ──
-    if (realism) {
-      fp.push(`[${lastV}]noise=alls=4:allf=t+u[grained]`);
-      lastV = "grained";
-    }
+    // ── 11. Film grain — removed ──
+    // noise=allf=t+u generates per-pixel random values every frame (~100M ops/sec).
+    // Removed to free CPU on 1-vCPU Cloud Run; imperceptible on compressed social video.
 
     // ── 12. Cinematic fade in / fade out ──
     const fadeDur = 0.4;
