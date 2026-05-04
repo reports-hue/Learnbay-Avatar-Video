@@ -1870,9 +1870,8 @@ export async function postProcessAvatarVideo(
       "-g 60",
       "-keyint_min 60",
       "-sc_threshold 0",
-      // Limit thread count: fewer threads = smaller per-thread frame buffers.
-      // 2 threads is enough for 1080p in Cloud Run's single-vCPU environment.
-      "-threads 2",
+      // 4 threads — matches the 4-vCPU Cloud Run machine configuration.
+      "-threads 4",
       "-c:a aac",
       "-b:a 192k",
       "-ar 48000",
