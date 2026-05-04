@@ -1,0 +1,12 @@
+# Generated video outputs — never commit
+outputs/*.mp4
+outputs/*.json
+outputs/*.ass
+outputs/*.jpg
+outputs/*.png
+outputs/*.webm
+
+# SQLite runtime files
+*.sqlite-shm
+*.sqlite-wal
+jobs.sqlite
