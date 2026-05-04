@@ -1,10 +1,5 @@
-# Generated video outputs — never commit
-outputs/*.mp4
-outputs/*.json
-outputs/*.ass
-outputs/*.jpg
-outputs/*.png
-outputs/*.webm
+# Entire outputs directory — generated at runtime, never commit
+outputs/
 
 # SQLite runtime files
 *.sqlite-shm
