@@ -4,7 +4,7 @@ import ffprobeStatic from "ffprobe-static";
 import axios from "axios";
 import path from "path";
 import { fileURLToPath } from "url";
-import { existsSync, readFileSync } from "fs";
+import { existsSync } from "fs";
 import { createWriteStream } from "fs";
 import fs from "fs/promises";
 import { spawn, spawnSync } from "child_process";
@@ -70,20 +70,14 @@ function binaryHasDrawtext(bin: string): boolean {
   }
 }
 
-function readBuildTimePathFile(name: string): string {
-  try {
-    const p = path.resolve(__dirname, name);
-    if (existsSync(p)) {
-      const content = readFileSync(p, "utf-8").trim();
-      if (content) return content;
-    }
-  } catch { /* ignore */ }
-  return "";
-}
+// These constants are replaced at build time by esbuild `define`.
+// They hold the absolute Nix store paths resolved during `build.mjs`.
+declare const __FFMPEG_BUILD_PATH__: string;
+declare const __FFPROBE_BUILD_PATH__: string;
 
 const ffmpegCandidates: string[] = [
   process.env.FFMPEG_PATH ?? "",
-  readBuildTimePathFile(".ffmpeg_path"),
+  typeof __FFMPEG_BUILD_PATH__ !== "undefined" ? __FFMPEG_BUILD_PATH__ : "",
   "ffmpeg",
   ffmpegPath ?? "",
 ].filter(Boolean);
@@ -110,7 +104,7 @@ if (selectedFfmpeg) {
   );
 }
 
-const ffprobeBuildTime = readBuildTimePathFile(".ffprobe_path");
+const ffprobeBuildTime = typeof __FFPROBE_BUILD_PATH__ !== "undefined" ? __FFPROBE_BUILD_PATH__ : "";
 const ffprobeResolved = ffprobeBuildTime || ffprobeStatic?.path || "ffprobe";
 ffmpeg.setFfprobePath(ffprobeResolved);
 
