@@ -4,7 +4,7 @@ import ffprobeStatic from "ffprobe-static";
 import axios from "axios";
 import path from "path";
 import { fileURLToPath } from "url";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { createWriteStream } from "fs";
 import fs from "fs/promises";
 import { spawn, spawnSync } from "child_process";
@@ -74,7 +74,7 @@ function readBuildTimePathFile(name: string): string {
   try {
     const p = path.resolve(__dirname, name);
     if (existsSync(p)) {
-      const content = require("fs").readFileSync(p, "utf-8").trim();
+      const content = readFileSync(p, "utf-8").trim();
       if (content) return content;
     }
   } catch { /* ignore */ }
