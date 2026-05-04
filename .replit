@@ -39,3 +39,6 @@ externalPort = 3001
 
 [userenv.shared]
 AZURE_IMAGE_ENDPOINT = "https://aadit-moiwmhiq-swedencentral.cognitiveservices.azure.com"
+
+[nix]
+channel = "stable-25_05"
