@@ -89,7 +89,10 @@ const PUBLIC_PATHS = new Set(["/healthz"]);
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   // req.path here is relative to the mount point ("/api"), so e.g. a request
   // to /api/auth/login arrives with req.path === "/auth/login".
-  if (req.path.startsWith("/auth/") || PUBLIC_PATHS.has(req.path)) {
+  // /video/* is bypassed: filenames are unguessable UUIDs and <video> / <img>
+  // browser elements cannot attach Bearer headers, so auth here would break
+  // video playback and thumbnail display entirely.
+  if (req.path.startsWith("/auth/") || req.path.startsWith("/video/") || PUBLIC_PATHS.has(req.path)) {
     return next();
   }
   const token = extractBearer(req);

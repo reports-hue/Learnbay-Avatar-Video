@@ -1071,7 +1071,7 @@ export async function postProcessAvatarVideo(
       outroLockoutSec: 2.5,   // avoid the CTA outro card
       totalDuration: duration,
       minGapSec: 1.2,         // never fire two leaks within 1.2s
-      maxCount: 12,           // cap filter graph complexity
+      maxCount: 3,            // cap filter graph complexity
     });
     if (leakEvents.length > 0) {
       const leakCacheDir = path.join(outputsDir, "cache", "leaks");
@@ -1105,7 +1105,7 @@ export async function postProcessAvatarVideo(
       const beatResult = await detectBeats(musicPath, {
         videoDurationSec: duration,
         tileToVideoDuration: true,
-        maxBeats: 64,
+        maxBeats: 8,
       });
       // Filter beats out of the T104 intro sting window (0 - 1.6s) where the
       // blackout would mask any pulse anyway, and out of the T105 outro card
@@ -1450,14 +1450,10 @@ export async function postProcessAvatarVideo(
       }
     }
 
-    // ── 4. Color grade + cinematic sharpening ──
+    // ── 4. Color grade ──
     if (realism) {
       fp.push(`[${lastV}]eq=brightness=0.02:saturation=1.1:contrast=1.05[graded]`);
-      fp.push(`[graded]unsharp=3:3:0.6:3:3:0.0[sharpened]`);
-      lastV = "sharpened";
-    } else {
-      fp.push(`[${lastV}]unsharp=5:5:0.8:5:5:0[sharpened]`);
-      lastV = "sharpened";
+      lastV = "graded";
     }
 
     // ── 5. Subtle lower-third gradient (single very-soft layer) ──
@@ -1702,11 +1698,9 @@ export async function postProcessAvatarVideo(
       // Swoosh removed — no longer applied to lastV.
     }
 
-    // ── 11. Film grain (after all overlays, for organic texture) ──
-    if (realism) {
-      fp.push(`[${lastV}]noise=alls=4:allf=t+u[grained]`);
-      lastV = "grained";
-    }
+    // ── 11. Film grain — removed ──
+    // noise=allf=t+u generates per-pixel random values every frame (~100M ops/sec).
+    // Removed to keep render times fast; imperceptible on compressed social video.
 
     // ── 12. Cinematic fade in / fade out ──
     const fadeDur = 0.4;
