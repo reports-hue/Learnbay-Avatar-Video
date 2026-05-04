@@ -48,3 +48,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Attached assets (user uploads via chat — not source code)
+attached_assets/
