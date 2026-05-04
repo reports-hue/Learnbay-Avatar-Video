@@ -315,14 +315,14 @@ function buildAmbientParticlesFilter(
     return `drawtext=text='\u25CF':fontcolor=white@${p.opacity.toFixed(2)}:fontsize=${p.size}:x='${xExpr}':y='${yExpr}'`;
   });
 
-  // Sigma scales with frame area for consistent bokeh size at any aspect ratio.
-  // Empirically: sigma=10-12 looks great at 1080p; scale linearly with min(w,h).
-  const sigma = Math.max(8, Math.min(14, Math.round((Math.min(outW, outH) / 1080) * 11)));
-
+  // sigma=2 (5×5 kernel) vs original sigma=11 (23×23): ~20x cheaper per frame.
+  // The slight softness is sufficient; heavy bokeh blur was the primary CPU bottleneck
+  // on Cloud Run's single-vCPU environment (caused 0.3 fps → SIGKILL).
+  // r=15: particle drift is slow-moving, 15fps is indistinguishable from 30fps for these.
   return [
-    // Particle layer: black canvas + N drifting bullet glyphs + gaussian blur,
+    // Particle layer: black canvas + N drifting bullet glyphs + light blur,
     // forced into RGB so screen-blend doesn't shift chroma.
-    `color=c=black:s=${outW}x${outH}:r=30:d=${durationSec.toFixed(2)},${drawtexts.join(",")},gblur=sigma=${sigma},format=gbrp[parts]`,
+    `color=c=black:s=${outW}x${outH}:r=15:d=${durationSec.toFixed(2)},${drawtexts.join(",")},gblur=sigma=2,format=gbrp[parts]`,
     // Force bg into RGB, screen-blend particles, convert back to YUV for downstream filters.
     `[${inputLabel}]format=gbrp[bg_rgb]`,
     `[bg_rgb][parts]blend=all_mode=screen:all_opacity=0.65,format=yuv420p[${outputLabel}]`,
