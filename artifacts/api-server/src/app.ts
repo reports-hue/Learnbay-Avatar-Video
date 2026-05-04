@@ -5,7 +5,6 @@ import { fileURLToPath } from "url";
 import pinoHttp from "pino-http";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import router from "./routes/index.js";
-import { requireAuth } from "./routes/auth.js";
 import { logger } from "./lib/logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,10 +33,6 @@ app.use("/api/assets", express.static(assetsDir));
 app.use("/api/assets", (_req, res) => {
   res.status(404).json({ error: "Asset not found" });
 });
-// Auth gate — applied to /api before the main router. Internally allows
-// /api/auth/* and /api/healthz through unauthenticated; everything else
-// (generate, brand, voices, future routes) requires a valid Bearer token.
-app.use("/api", requireAuth);
 app.use("/api", router);
 
 if (process.env.NODE_ENV === "production") {
