@@ -1362,12 +1362,18 @@ export async function postProcessAvatarVideo(
     // ── 4. Avatar compositing ──
     let lastV = "av_framed";
 
+    // Normalize avatar to 30fps CFR immediately — Azure delivers 25fps (sometimes VFR)
+    // H.264 which causes timestamp mismatches when composited against 30fps backgrounds.
+    // Without this, the avatar visual stutters ("robot dancing") while audio plays fine.
+    // settb=AVTB resets the timebase so downstream setpts math stays accurate.
+    fp.push(`[${avatarIdx}:v]fps=30,settb=AVTB[av_cfr]`);
+
     // If we need to retime the avatar to match ElevenLabs audio duration,
     // apply setpts BEFORE chromakey/scale so all downstream stages see the
     // retimed video. Otherwise reference the raw avatar input directly.
-    let avSrc = `${avatarIdx}:v`;
+    let avSrc = "av_cfr";
     if (useRetime) {
-      fp.push(`[${avatarIdx}:v]setpts=PTS*${retimeRatio.toFixed(4)}[av_retimed]`);
+      fp.push(`[av_cfr]setpts=PTS*${retimeRatio.toFixed(4)}[av_retimed]`);
       avSrc = "av_retimed";
       logger.info({ avatarDuration, elDuration, retimeRatio }, "Retiming avatar video to match ElevenLabs audio");
     }
