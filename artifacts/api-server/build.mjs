@@ -124,6 +124,23 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
   });
 }
 
+async function saveBinaryPaths() {
+  const { execSync } = await import("node:child_process");
+  const distDir = path.resolve(artifactDir, "dist");
+  for (const [cmd, file] of [["ffmpeg", ".ffmpeg_path"], ["ffprobe", ".ffprobe_path"]]) {
+    try {
+      const resolved = execSync(`which ${cmd}`, { encoding: "utf-8" }).trim();
+      if (resolved) {
+        const dest = path.resolve(distDir, file);
+        await (await import("node:fs/promises")).writeFile(dest, resolved + "\n");
+        console.log(`  saved ${cmd} path: ${resolved} -> ${dest}`);
+      }
+    } catch {
+      console.log(`  warning: ${cmd} not found on PATH, skipping path save`);
+    }
+  }
+}
+
 async function copyFrontend() {
   // Cloud Run only ships the api-server's artifact directory in production —
   // the sibling `artifacts/video-generator/dist/public` is NOT included. Copy
@@ -154,6 +171,7 @@ async function copyFrontend() {
 }
 
 buildAll()
+  .then(saveBinaryPaths)
   .then(copyFrontend)
   .catch((err) => {
     console.error(err);

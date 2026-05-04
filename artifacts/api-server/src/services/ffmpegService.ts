@@ -53,8 +53,9 @@ import { prepareLogoFromUrl, probeImageDims } from "./logoService.js";
  *
  * Probe order:
  *  1. `FFMPEG_PATH` env override (operator escape hatch)
- *  2. `ffmpeg` from PATH (typically the system / Nix-provided full build)
- *  3. `ffmpeg-static` (last resort)
+ *  2. Build-time resolved Nix path (`.ffmpeg_path` written during prod build)
+ *  3. `ffmpeg` from PATH (typically the system / Nix-provided full build)
+ *  4. `ffmpeg-static` (last resort)
  */
 function binaryHasDrawtext(bin: string): boolean {
   try {
@@ -69,8 +70,20 @@ function binaryHasDrawtext(bin: string): boolean {
   }
 }
 
+function readBuildTimePathFile(name: string): string {
+  try {
+    const p = path.resolve(__dirname, name);
+    if (existsSync(p)) {
+      const content = require("fs").readFileSync(p, "utf-8").trim();
+      if (content) return content;
+    }
+  } catch { /* ignore */ }
+  return "";
+}
+
 const ffmpegCandidates: string[] = [
   process.env.FFMPEG_PATH ?? "",
+  readBuildTimePathFile(".ffmpeg_path"),
   "ffmpeg",
   ffmpegPath ?? "",
 ].filter(Boolean);
@@ -97,11 +110,11 @@ if (selectedFfmpeg) {
   );
 }
 
-if (ffprobeStatic?.path) {
-  ffmpeg.setFfprobePath(ffprobeStatic.path);
-}
+const ffprobeBuildTime = readBuildTimePathFile(".ffprobe_path");
+const ffprobeResolved = ffprobeBuildTime || ffprobeStatic?.path || "ffprobe";
+ffmpeg.setFfprobePath(ffprobeResolved);
 
-export const resolvedFfprobeBin: string = ffprobeStatic?.path ?? "ffprobe";
+export const resolvedFfprobeBin: string = ffprobeResolved;
 
 /**
  * Resolved ffmpeg binary path used by all out-of-band `spawn(...)` calls
