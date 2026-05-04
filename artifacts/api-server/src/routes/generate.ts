@@ -12,7 +12,7 @@ import * as jobStore from "../lib/jobStore.js";
 import type { JobState, JobResult } from "../lib/jobStore.js";
 import { generateScript, generateBrandTheme, researchCompanyForScript, type ScriptStyle } from "../services/openai.js";
 import { generateAvatarVideo, resolveAvatarStyle, getAvatarPose, type AvatarJobConfig, type PacingRate } from "../services/avatarService.js";
-import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle, resolvedFfprobeBin } from "../services/ffmpegService.js";
+import { postProcessAvatarVideo, extractThumbnail, type CaptionStyle } from "../services/ffmpegService.js";
 import { generateBackgroundImage } from "../services/imageGenerationService.js";
 import { getWordTimings } from "../services/speech.js";
 import { synthesizeElevenLabs } from "../services/elevenLabsService.js";
@@ -53,46 +53,6 @@ async function probeDurationSec(filePath: string): Promise<number> {
       resolve(metadata.format.duration ?? 0);
     });
   });
-}
-
-/**
- * Best-effort delete all per-job intermediate chunk files for a videoId.
- * These are produced during generation but no longer needed once the
- * final video_<videoId>.mp4 + thumb_<videoId>.jpg are written.
- *
- * Cleaned: avatar_raw_*.{mp4,webm} (raw Azure synthesis), el_padded_*.mp3
- * (silence-padded EL audio), and all per-job .ass overlay files
- * (captions, hook, callouts, statpopin, outro_card, cta).
- *
- * KEPT (not touched here): video_<id>.mp4, thumb_<id>.jpg,
- * <id>.assets.json (license audit trail), the cache/ directory
- * (Pexels/LLM/anim_text — reused across jobs and referenced by
- * assets.json), and the content-hash cached assets el_<hash>.mp3,
- * bg_<hash>.{png,jpg}, bg_preview_<hash>.jpg, logo_<hash>.png,
- * photo_<hash>.jpg.
- *
- * Errors are swallowed because (a) some files won't exist for every job
- * (e.g. captions only when captionStyle != none, statpopin only when
- * stats detected) and (b) cleanup must never fail the job.
- */
-async function cleanupJobChunkFiles(videoId: string): Promise<void> {
-  const fsp = await import("fs/promises");
-  const chunkFilenames = [
-    `avatar_raw_${videoId}.mp4`,
-    `avatar_raw_${videoId}.webm`,
-    `el_padded_${videoId}.mp3`,
-    `captions_${videoId}.ass`,
-    `hook_${videoId}.ass`,
-    `callouts_${videoId}.ass`,
-    `statpopin_${videoId}.ass`,
-    `outro_card_${videoId}.ass`,
-    `cta_${videoId}.ass`,
-  ];
-  await Promise.all(
-    chunkFilenames.map((name) =>
-      fsp.unlink(path.join(outputsDir, name)).catch(() => undefined),
-    ),
-  );
 }
 
 const router: IRouter = Router();
@@ -557,12 +517,18 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
 
     updateJob(jobId, { status: "done", step: "done", percent: 100, message: "Your video is ready!", result });
 
-    // Best-effort cleanup of all per-job intermediate chunk files (raw
-    // avatar download 24-50 MB, padded EL audio, .ass overlay files).
-    // Only fires on success; on failure we keep them for debugging.
-    // Final outputs (video/thumb/assets.json) and shared caches are
-    // preserved — see cleanupJobChunkFiles JSDoc for the full contract.
-    await cleanupJobChunkFiles(videoId);
+    // Best-effort cleanup of the per-job raw avatar download (24-50 MB each).
+    // Only fires on success; on failure we keep it for debugging. Errors are
+    // swallowed — file may already be gone, or be a webm vs mp4 mismatch.
+    try {
+      const fsp = await import("fs/promises");
+      await Promise.all([
+        fsp.unlink(path.join(outputsDir, `avatar_raw_${videoId}.mp4`)).catch(() => undefined),
+        fsp.unlink(path.join(outputsDir, `avatar_raw_${videoId}.webm`)).catch(() => undefined),
+      ]);
+    } catch {
+      // ignore — cleanup is best-effort
+    }
   } catch (err) {
     const e = err as { message?: string; response?: { status?: number; data?: unknown } };
     const status = e?.response?.status;
@@ -746,7 +712,7 @@ router.post(
 
     try {
       // ffprobe → real dimensions, so we can warn on aspect mismatch.
-      const probeOut = await execFileAsync(resolvedFfprobeBin, [
+      const probeOut = await execFileAsync("ffprobe", [
         "-v", "error",
         "-select_streams", "v:0",
         "-show_entries", "stream=width,height",

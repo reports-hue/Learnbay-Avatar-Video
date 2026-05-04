@@ -27,7 +27,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import imageSize from "image-size";
 import { logger } from "../lib/logger.js";
 
 const execFileP = promisify(execFile);
@@ -85,22 +84,10 @@ async function rasterizeSvg(svgBuf: Buffer, destDir: string): Promise<string> {
 }
 
 /**
- * Probe image dimensions. Uses the pure-JS `image-size` package so it works
- * in production where `ffprobe` is not available (ffmpeg-static only ships
- * the ffmpeg binary). Falls back to ffprobe if image-size fails.
- * Returns {0,0} on any failure so callers can fall back to safe defaults.
+ * Probe image dimensions using ffprobe. Returns {0,0} on any failure so
+ * callers can fall back to safe defaults rather than crashing.
  */
 export async function probeImageDims(filePath: string): Promise<{ width: number; height: number }> {
-  try {
-    const buf = await fs.readFile(filePath);
-    const result = imageSize(buf);
-    const w = result.width ?? 0;
-    const h = result.height ?? 0;
-    if (w > 0 && h > 0) return { width: w, height: h };
-  } catch {
-    // fall through to ffprobe
-  }
-
   try {
     const { stdout } = await execFileP(
       "ffprobe",

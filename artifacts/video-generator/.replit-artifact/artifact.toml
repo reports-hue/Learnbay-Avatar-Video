@@ -18,9 +18,13 @@ localPort = 24396
 run = "pnpm --filter @workspace/video-generator run dev"
 
 [services.production]
-serve = "static"
+build = [ "pnpm", "--filter", "@workspace/video-generator", "run", "build" ]
 publicDir = "artifacts/video-generator/dist/public"
-build = "pnpm --filter @workspace/video-generator run build"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
 
 [services.env]
 PORT = "24396"

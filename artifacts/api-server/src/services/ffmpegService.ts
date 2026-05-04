@@ -1,6 +1,5 @@
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegPath from "ffmpeg-static";
-import ffprobeStatic from "ffprobe-static";
 import axios from "axios";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -53,9 +52,8 @@ import { prepareLogoFromUrl, probeImageDims } from "./logoService.js";
  *
  * Probe order:
  *  1. `FFMPEG_PATH` env override (operator escape hatch)
- *  2. Build-time resolved Nix path (`.ffmpeg_path` written during prod build)
- *  3. `ffmpeg` from PATH (typically the system / Nix-provided full build)
- *  4. `ffmpeg-static` (last resort)
+ *  2. `ffmpeg` from PATH (typically the system / Nix-provided full build)
+ *  3. `ffmpeg-static` (last resort)
  */
 function binaryHasDrawtext(bin: string): boolean {
   try {
@@ -70,14 +68,8 @@ function binaryHasDrawtext(bin: string): boolean {
   }
 }
 
-// These constants are replaced at build time by esbuild `define`.
-// They hold the absolute Nix store paths resolved during `build.mjs`.
-declare const __FFMPEG_BUILD_PATH__: string;
-declare const __FFPROBE_BUILD_PATH__: string;
-
 const ffmpegCandidates: string[] = [
   process.env.FFMPEG_PATH ?? "",
-  typeof __FFMPEG_BUILD_PATH__ !== "undefined" ? __FFMPEG_BUILD_PATH__ : "",
   "ffmpeg",
   ffmpegPath ?? "",
 ].filter(Boolean);
@@ -103,12 +95,6 @@ if (selectedFfmpeg) {
     "[ffmpeg] no binary with drawtext support found — particles, swoosh, and other text-based overlays will fail. Set FFMPEG_PATH to a full FFmpeg build to fix."
   );
 }
-
-const ffprobeBuildTime = typeof __FFPROBE_BUILD_PATH__ !== "undefined" ? __FFPROBE_BUILD_PATH__ : "";
-const ffprobeResolved = ffprobeBuildTime || ffprobeStatic?.path || "ffprobe";
-ffmpeg.setFfprobePath(ffprobeResolved);
-
-export const resolvedFfprobeBin: string = ffprobeResolved;
 
 /**
  * Resolved ffmpeg binary path used by all out-of-band `spawn(...)` calls
@@ -269,22 +255,42 @@ type ParticleSpec = {
 };
 
 const LANDSCAPE_PARTICLES: ParticleSpec[] = [
+  // top edge (y ~ 0.10-0.18)
   { nx: 0.06, ny: 0.13, size: 14, opacity: 0.9,  freqX: 0.50, freqY: 0.30, ampX: 30, ampY: 20 },
+  { nx: 0.24, ny: 0.10, size: 10, opacity: 0.7,  freqX: 0.40, freqY: 0.35, ampX: 25, ampY: 18 },
   { nx: 0.43, ny: 0.16, size: 16, opacity: 0.85, freqX: 0.60, freqY: 0.45, ampX: 28, ampY: 22 },
+  { nx: 0.66, ny: 0.10, size: 12, opacity: 0.75, freqX: 0.50, freqY: 0.40, ampX: 32, ampY: 24 },
   { nx: 0.85, ny: 0.16, size: 13, opacity: 0.80, freqX: 0.55, freqY: 0.50, ampX: 28, ampY: 20 },
+  // left column (x ~ 0.05-0.13)
+  { nx: 0.10, ny: 0.42, size: 11, opacity: 0.65, freqX: 0.45, freqY: 0.55, ampX: 30, ampY: 25 },
   { nx: 0.06, ny: 0.62, size: 13, opacity: 0.70, freqX: 0.50, freqY: 0.40, ampX: 26, ampY: 22 },
+  // right column (x ~ 0.85-0.95)
   { nx: 0.91, ny: 0.38, size: 12, opacity: 0.70, freqX: 0.50, freqY: 0.55, ampX: 28, ampY: 24 },
+  { nx: 0.88, ny: 0.58, size: 10, opacity: 0.65, freqX: 0.45, freqY: 0.40, ampX: 24, ampY: 22 },
+  // bottom edge (y ~ 0.85-0.95)
   { nx: 0.10, ny: 0.86, size: 15, opacity: 0.80, freqX: 0.60, freqY: 0.40, ampX: 25, ampY: 18 },
+  { nx: 0.31, ny: 0.92, size: 11, opacity: 0.65, freqX: 0.50, freqY: 0.55, ampX: 28, ampY: 20 },
+  { nx: 0.50, ny: 0.88, size: 10, opacity: 0.70, freqX: 0.50, freqY: 0.60, ampX: 28, ampY: 22 },
   { nx: 0.71, ny: 0.93, size: 12, opacity: 0.85, freqX: 0.45, freqY: 0.55, ampX: 30, ampY: 24 },
+  { nx: 0.89, ny: 0.85, size: 9,  opacity: 0.65, freqX: 0.55, freqY: 0.45, ampX: 24, ampY: 20 },
 ];
 
 const VERTICAL_PARTICLES: ParticleSpec[] = [
+  // top band, broadly above the avatar (y ~ 0.04-0.18)
   { nx: 0.08, ny: 0.06, size: 13, opacity: 0.85, freqX: 0.50, freqY: 0.35, ampX: 28, ampY: 20 },
+  { nx: 0.28, ny: 0.12, size: 11, opacity: 0.70, freqX: 0.40, freqY: 0.45, ampX: 26, ampY: 22 },
   { nx: 0.46, ny: 0.05, size: 16, opacity: 0.85, freqX: 0.60, freqY: 0.40, ampX: 30, ampY: 24 },
+  { nx: 0.66, ny: 0.13, size: 12, opacity: 0.75, freqX: 0.50, freqY: 0.50, ampX: 28, ampY: 22 },
   { nx: 0.85, ny: 0.07, size: 10, opacity: 0.65, freqX: 0.45, freqY: 0.40, ampX: 24, ampY: 20 },
+  { nx: 0.50, ny: 0.17, size: 14, opacity: 0.80, freqX: 0.55, freqY: 0.55, ampX: 28, ampY: 24 },
+  // left column (x ~ 0.04-0.12), in lower half but on the edge so not on face
   { nx: 0.06, ny: 0.34, size: 12, opacity: 0.70, freqX: 0.45, freqY: 0.50, ampX: 22, ampY: 24 },
+  { nx: 0.08, ny: 0.58, size: 10, opacity: 0.65, freqX: 0.50, freqY: 0.40, ampX: 24, ampY: 22 },
   { nx: 0.05, ny: 0.78, size: 13, opacity: 0.75, freqX: 0.55, freqY: 0.45, ampX: 22, ampY: 20 },
-  { nx: 0.93, ny: 0.55, size: 13, opacity: 0.75, freqX: 0.45, freqY: 0.40, ampX: 26, ampY: 24 },
+  // right column (x ~ 0.88-0.96)
+  { nx: 0.93, ny: 0.32, size: 11, opacity: 0.70, freqX: 0.50, freqY: 0.50, ampX: 24, ampY: 22 },
+  { nx: 0.90, ny: 0.55, size: 13, opacity: 0.75, freqX: 0.45, freqY: 0.40, ampX: 26, ampY: 24 },
+  { nx: 0.95, ny: 0.80, size: 10, opacity: 0.65, freqX: 0.55, freqY: 0.55, ampX: 22, ampY: 20 },
 ];
 
 function buildAmbientParticlesFilter(
@@ -313,11 +319,14 @@ function buildAmbientParticlesFilter(
     return `drawtext=text='\u25CF':fontcolor=white@${p.opacity.toFixed(2)}:fontsize=${p.size}:x='${xExpr}':y='${yExpr}'`;
   });
 
-  // sigma=2 (5×5 kernel) vs original sigma=11 (23×23): ~20x cheaper per frame.
+  // Sigma scales with frame area for consistent bokeh size at any aspect ratio.
+  // Empirically: sigma=10-12 looks great at 1080p; scale linearly with min(w,h).
+  const sigma = Math.max(8, Math.min(14, Math.round((Math.min(outW, outH) / 1080) * 11)));
+
   return [
-    // Particle layer: black canvas + N drifting bullet glyphs + light blur,
+    // Particle layer: black canvas + N drifting bullet glyphs + gaussian blur,
     // forced into RGB so screen-blend doesn't shift chroma.
-    `color=c=black:s=${outW}x${outH}:r=15:d=${durationSec.toFixed(2)},${drawtexts.join(",")},gblur=sigma=2,format=gbrp[parts]`,
+    `color=c=black:s=${outW}x${outH}:r=30:d=${durationSec.toFixed(2)},${drawtexts.join(",")},gblur=sigma=${sigma},format=gbrp[parts]`,
     // Force bg into RGB, screen-blend particles, convert back to YUV for downstream filters.
     `[${inputLabel}]format=gbrp[bg_rgb]`,
     `[bg_rgb][parts]blend=all_mode=screen:all_opacity=0.65,format=yuv420p[${outputLabel}]`,
@@ -1071,7 +1080,7 @@ export async function postProcessAvatarVideo(
       outroLockoutSec: 2.5,   // avoid the CTA outro card
       totalDuration: duration,
       minGapSec: 1.2,         // never fire two leaks within 1.2s
-      maxCount: 3,            // cap filter graph complexity
+      maxCount: 12,           // cap filter graph complexity
     });
     if (leakEvents.length > 0) {
       const leakCacheDir = path.join(outputsDir, "cache", "leaks");
@@ -1105,7 +1114,7 @@ export async function postProcessAvatarVideo(
       const beatResult = await detectBeats(musicPath, {
         videoDurationSec: duration,
         tileToVideoDuration: true,
-        maxBeats: 8,
+        maxBeats: 64,
       });
       // Filter beats out of the T104 intro sting window (0 - 1.6s) where the
       // blackout would mask any pulse anyway, and out of the T105 outro card
@@ -1286,11 +1295,9 @@ export async function postProcessAvatarVideo(
       // AI-generated or user-supplied background image: scale to oversized, loop for duration
       fp.push(`[${bgImgIdx}:v]scale=${outW103}:${outH103}:force_original_aspect_ratio=increase,crop=${outW103}:${outH103},loop=loop=-1:size=1:start=0,setpts=PTS-STARTPTS,fps=30,trim=duration=${bgDur}[bg_raw]`);
     } else if (useGradient) {
-      // rate=1: this gradient is static (no time-varying params) — one frame held/repeated
-      // saves ~9 GB of redundant frame data vs rate=30 for a 45s video.
-      fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=1[bg_raw]`);
+      fp.push(`gradients=s=${outW103}x${outH103}:type=linear:x0=0:y0=0:x1=${outW103}:y1=${outH103}:c0=${bgHex}:c1=${bg2Hex}:duration=${bgDur}:rate=30[bg_raw]`);
     } else {
-      fp.push(`color=c=${bgHex}:s=${outW103}x${outH103}:r=1:d=${bgDur}[bg_raw]`);
+      fp.push(`color=c=${bgHex}:s=${outW103}x${outH103}:r=30:d=${bgDur}[bg_raw]`);
     }
 
     // ── 2. Cinematic radial glow overlay — accent-colored "key light" behind avatar ──
@@ -1362,18 +1369,12 @@ export async function postProcessAvatarVideo(
     // ── 4. Avatar compositing ──
     let lastV = "av_framed";
 
-    // Normalize avatar to 30fps CFR immediately — Azure delivers 25fps (sometimes VFR)
-    // H.264 which causes timestamp mismatches when composited against 30fps backgrounds.
-    // Without this, the avatar visual stutters ("robot dancing") while audio plays fine.
-    // settb=AVTB resets the timebase so downstream setpts math stays accurate.
-    fp.push(`[${avatarIdx}:v]fps=30,settb=AVTB[av_cfr]`);
-
     // If we need to retime the avatar to match ElevenLabs audio duration,
     // apply setpts BEFORE chromakey/scale so all downstream stages see the
     // retimed video. Otherwise reference the raw avatar input directly.
-    let avSrc = "av_cfr";
+    let avSrc = `${avatarIdx}:v`;
     if (useRetime) {
-      fp.push(`[av_cfr]setpts=PTS*${retimeRatio.toFixed(4)}[av_retimed]`);
+      fp.push(`[${avatarIdx}:v]setpts=PTS*${retimeRatio.toFixed(4)}[av_retimed]`);
       avSrc = "av_retimed";
       logger.info({ avatarDuration, elDuration, retimeRatio }, "Retiming avatar video to match ElevenLabs audio");
     }
@@ -1456,10 +1457,16 @@ export async function postProcessAvatarVideo(
       }
     }
 
-    // ── 4. Color grade ──
+    // ── 4. Color grade + cinematic sharpening ──
+    // Vignette was removed: it created a visible curved dark arc at the bottom
+    // of the avatar frame that users perceived as the avatar being "cut off".
     if (realism) {
       fp.push(`[${lastV}]eq=brightness=0.02:saturation=1.1:contrast=1.05[graded]`);
-      lastV = "graded";
+      fp.push(`[graded]unsharp=3:3:0.6:3:3:0.0[sharpened]`);
+      lastV = "sharpened";
+    } else {
+      fp.push(`[${lastV}]unsharp=5:5:0.8:5:5:0[sharpened]`);
+      lastV = "sharpened";
     }
 
     // ── 5. Subtle lower-third gradient (single very-soft layer) ──
@@ -1704,9 +1711,11 @@ export async function postProcessAvatarVideo(
       // Swoosh removed — no longer applied to lastV.
     }
 
-    // ── 11. Film grain — removed ──
-    // noise=allf=t+u generates per-pixel random values every frame (~100M ops/sec).
-    // Removed to keep render times fast; imperceptible on compressed social video.
+    // ── 11. Film grain (after all overlays, for organic texture) ──
+    if (realism) {
+      fp.push(`[${lastV}]noise=alls=4:allf=t+u[grained]`);
+      lastV = "grained";
+    }
 
     // ── 12. Cinematic fade in / fade out ──
     const fadeDur = 0.4;
@@ -1863,21 +1872,16 @@ export async function postProcessAvatarVideo(
       "-map [aout]",
       `-t ${duration}`,
       "-c:v libx264",
-      // veryfast: significantly lower CPU and memory vs fast, acceptable quality for
-      // short social clips. CRF=18 still drives quality; preset mainly affects
-      // motion-estimation buffer size (veryfast = much smaller).
-      "-preset veryfast",
+      // `preset fast` keeps render time reasonable (~30–60s for a 45s clip).
+      // The CRF=18 improvement is what actually drives the quality boost — preset
+      // mostly controls file size at a given quality. `medium` made renders feel broken.
+      "-preset fast",
       "-crf 18",
-      // Hard bitrate ceiling per project spec (4000kbps). Also caps VBV buffer memory.
-      "-maxrate 4000k",
-      "-bufsize 8000k",
       "-profile:v high",
       "-level 4.1",
       "-g 60",
       "-keyint_min 60",
       "-sc_threshold 0",
-      // 4 threads — matches the 4-vCPU Cloud Run machine configuration.
-      "-threads 4",
       "-c:a aac",
       "-b:a 192k",
       "-ar 48000",

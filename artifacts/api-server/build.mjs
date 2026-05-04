@@ -3,26 +3,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
-import { cp, rm, stat } from "node:fs/promises";
-import { execSync } from "node:child_process";
+import { rm } from "node:fs/promises";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
-
-// Resolve full-featured system ffmpeg/ffprobe at build time.
-// These paths are baked into the bundle via esbuild `define` so there is
-// zero runtime file I/O and no __dirname timing issues.
-function resolveBin(cmd) {
-  try {
-    const p = execSync(`which ${cmd}`, { encoding: "utf-8" }).trim();
-    if (p) { console.log(`  [build] resolved ${cmd}: ${p}`); return p; }
-  } catch { /* not on PATH */ }
-  return "";
-}
-const BUILD_FFMPEG_PATH = resolveBin("ffmpeg");
-const BUILD_FFPROBE_PATH = resolveBin("ffprobe");
 
 async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
@@ -115,17 +101,10 @@ async function buildAll() {
       "puppeteer-core",
       "electron",
       "ffmpeg-static",
-      "ffprobe-static",
       "fluent-ffmpeg",
       "microsoft-cognitiveservices-speech-sdk",
     ],
     sourcemap: "linked",
-    define: {
-      // Bake the system ffmpeg/ffprobe paths into the bundle at build time.
-      // Using define avoids all __dirname timing issues and file I/O at startup.
-      __FFMPEG_BUILD_PATH__: JSON.stringify(BUILD_FFMPEG_PATH),
-      __FFPROBE_BUILD_PATH__: JSON.stringify(BUILD_FFPROBE_PATH),
-    },
     plugins: [
       // pino relies on workers to handle logging, instead of externalizing it we use a plugin to handle it
       esbuildPluginPino({ transports: ["pino-pretty"] })
@@ -144,38 +123,7 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
   });
 }
 
-async function copyFrontend() {
-  // Cloud Run only ships the api-server's artifact directory in production —
-  // the sibling `artifacts/video-generator/dist/public` is NOT included. Copy
-  // the pre-built frontend into our own dist so app.ts can serve it from
-  // `./public` (relative to dist/index.mjs's __dirname) at runtime.
-  const frontendSrc = path.resolve(
-    artifactDir,
-    "..",
-    "video-generator",
-    "dist",
-    "public",
-  );
-  const frontendDst = path.resolve(artifactDir, "dist", "public");
-
-  try {
-    const s = await stat(frontendSrc);
-    if (!s.isDirectory()) {
-      throw new Error(`expected directory at ${frontendSrc}`);
-    }
-  } catch (err) {
-    throw new Error(
-      `Frontend build not found at ${frontendSrc}. Run \`pnpm --filter @workspace/video-generator run build\` before building the api-server. (${err.message})`,
-    );
-  }
-
-  await cp(frontendSrc, frontendDst, { recursive: true });
-  console.log(`  copied frontend ${frontendSrc} -> ${frontendDst}`);
-}
-
-buildAll()
-  .then(copyFrontend)
-  .catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
+buildAll().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
