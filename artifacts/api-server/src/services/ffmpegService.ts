@@ -255,23 +255,17 @@ type ParticleSpec = {
 };
 
 const LANDSCAPE_PARTICLES: ParticleSpec[] = [
-  // top edge (y ~ 0.10-0.18)
+  // top edge — 3 anchor points (was 5; reduced to cut filter-graph RAM for long-form landscape renders)
   { nx: 0.06, ny: 0.13, size: 14, opacity: 0.9,  freqX: 0.50, freqY: 0.30, ampX: 30, ampY: 20 },
-  { nx: 0.24, ny: 0.10, size: 10, opacity: 0.7,  freqX: 0.40, freqY: 0.35, ampX: 25, ampY: 18 },
   { nx: 0.43, ny: 0.16, size: 16, opacity: 0.85, freqX: 0.60, freqY: 0.45, ampX: 28, ampY: 22 },
-  { nx: 0.66, ny: 0.10, size: 12, opacity: 0.75, freqX: 0.50, freqY: 0.40, ampX: 32, ampY: 24 },
   { nx: 0.85, ny: 0.16, size: 13, opacity: 0.80, freqX: 0.55, freqY: 0.50, ampX: 28, ampY: 20 },
-  // left column (x ~ 0.05-0.13)
-  { nx: 0.10, ny: 0.42, size: 11, opacity: 0.65, freqX: 0.45, freqY: 0.55, ampX: 30, ampY: 25 },
+  // left column
   { nx: 0.06, ny: 0.62, size: 13, opacity: 0.70, freqX: 0.50, freqY: 0.40, ampX: 26, ampY: 22 },
-  // right column (x ~ 0.85-0.95)
+  // right column
   { nx: 0.91, ny: 0.38, size: 12, opacity: 0.70, freqX: 0.50, freqY: 0.55, ampX: 28, ampY: 24 },
-  { nx: 0.88, ny: 0.58, size: 10, opacity: 0.65, freqX: 0.45, freqY: 0.40, ampX: 24, ampY: 22 },
-  // bottom edge (y ~ 0.85-0.95)
+  // bottom edge — 3 anchor points (was 5)
   { nx: 0.10, ny: 0.86, size: 15, opacity: 0.80, freqX: 0.60, freqY: 0.40, ampX: 25, ampY: 18 },
-  { nx: 0.31, ny: 0.92, size: 11, opacity: 0.65, freqX: 0.50, freqY: 0.55, ampX: 28, ampY: 20 },
   { nx: 0.50, ny: 0.88, size: 10, opacity: 0.70, freqX: 0.50, freqY: 0.60, ampX: 28, ampY: 22 },
-  { nx: 0.71, ny: 0.93, size: 12, opacity: 0.85, freqX: 0.45, freqY: 0.55, ampX: 30, ampY: 24 },
   { nx: 0.89, ny: 0.85, size: 9,  opacity: 0.65, freqX: 0.55, freqY: 0.45, ampX: 24, ampY: 20 },
 ];
 
@@ -1887,6 +1881,23 @@ export async function postProcessAvatarVideo(
       "-ar 48000",
       "-movflags +faststart",
       "-pix_fmt yuv420p",
+      // Landscape videos (YouTube Video / Landscape Video) run 40-90s — 2-3× longer
+      // than portrait clips. Without limits, FFmpeg's libx264 lookahead + input
+      // demuxer threads hold enough parallel 1920×1080 frame buffers to exhaust
+      // available RAM and trigger an OS OOM SIGKILL.
+      //
+      // -threads 2        → limits libx264 encode threads AND demuxer threads;
+      //                     each thread keeps its own slice/frame buffer (~6 MB at
+      //                     1920×1080), so 2 threads vs 8 saves ~200-400 MB across
+      //                     the 5-8 simultaneous input streams a landscape render has.
+      // -maxrate 8000k    → caps the VBV peak bitrate so the encoder never needs to
+      //                     buffer more than bufsize/maxrate ≈ 1.5 s of frames.
+      // -bufsize 12000k   → VBV buffer size; ~1.5 s at 8 Mbps is ample for smooth
+      //                     CBR-capped delivery and stays well within typical limits.
+      //
+      // Portrait pipeline is intentionally left uncapped — it's shorter (25-35s),
+      // has fewer simultaneous streams, and is confirmed working fine.
+      ...(!isVertical ? ["-threads 2", "-maxrate 8000k", "-bufsize 12000k"] : []),
     ];
 
     cmd

@@ -419,9 +419,16 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
             // `broll-pip` (picture-in-picture) is intentionally excluded — the
             // segmenter prompt already discourages it, this is defence in depth
             // so a regression in the LLM plan can't sneak a PiP cutaway through.
-            const brollSegments = plan.segments.filter(
-              (s) => s.mode === "broll-fullscreen"
-            );
+            // Cap b-roll at 3 clips for landscape. Long-form landscape videos
+            // (YouTube Video: 70-90s, Landscape Video: 40-60s) can produce 6+
+            // b-roll segments, each requiring a separate 1920×1080 decoded
+            // stream in the FFmpeg filter graph. More than 3 simultaneous
+            // streams pushed landscape renders into OOM SIGKILL territory.
+            // Portrait is untouched — it's 25-35s and confirmed working.
+            const MAX_BROLL_LANDSCAPE = 3;
+            const brollSegments = plan.segments
+              .filter((s) => s.mode === "broll-fullscreen")
+              .slice(0, brollIsVertical ? undefined : MAX_BROLL_LANDSCAPE);
             if (brollSegments.length > 0) {
               updateJob(jobId, {
                 step: "broll_fetch",
