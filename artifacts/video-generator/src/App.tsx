@@ -40,7 +40,7 @@ export default function App() {
               <Clapperboard className="w-4 h-4 text-white" />
             </div>
             <div className="group-data-[collapsible=icon]:hidden leading-tight">
-              <p className="text-sm font-bold text-foreground">Libraryminds</p>
+              <p className="text-sm font-bold text-foreground">Learnbay</p>
               <p className="text-[10px] text-muted-foreground">Video Generator</p>
             </div>
           </div>
@@ -121,7 +121,6 @@ export default function App() {
           </div>
         </SidebarFooter>
       </Sidebar>
-
       {/* ── Main content ── */}
       <SidebarInset className="overflow-auto bg-background">
         {/* Top bar */}
@@ -129,7 +128,7 @@ export default function App() {
           <SidebarTrigger className="text-muted-foreground hover:text-foreground" />
           <div className="h-4 w-px bg-border" />
           <nav className="flex items-center gap-1 text-xs text-muted-foreground">
-            <span>Libraryminds</span>
+            <span>Learnbay</span>
             <ChevronRight className="w-3 h-3" />
             <span className="text-foreground font-medium capitalize">
               {page === "create" ? "Create Video" : page === "library" ? "Video Library" : page === "settings" ? "Brand Settings" : "Dashboard"}
