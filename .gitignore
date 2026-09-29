@@ -7,7 +7,6 @@ out-tsc
 *.tsbuildinfo
 .expo
 .expo-shared
-/attached_assets
 
 # dependencies
 node_modules
@@ -49,5 +48,5 @@ Thumbs.db
 .cache/
 .local/
 
-# Attached assets (user uploads via chat — not source code)
-attached_assets/
+# Attached assets and all nested folders
+/attached_assets/
