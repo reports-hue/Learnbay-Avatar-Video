@@ -38,7 +38,7 @@ export function Dashboard({ brand, library, setPage }: Props) {
       {/* ── Welcome header ── */}
       <div>
         <h1 className="text-2xl font-bold text-foreground">
-          {hasBrand ? `Welcome back${brand.companyName ? `, ${brand.companyName}` : ""}` : "Welcome to Libraryminds"}
+          {hasBrand ? `Welcome back${brand.companyName ? `, ${brand.companyName}` : ""}` : "Welcome to Learnbay"}
         </h1>
         <p className="text-muted-foreground mt-1">
           Create AI-powered avatar videos for your brand in minutes.
