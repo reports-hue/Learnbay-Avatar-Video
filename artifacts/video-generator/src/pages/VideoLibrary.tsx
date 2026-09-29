@@ -280,7 +280,7 @@ function VideoCard({ video, confirmDelete, onPlay, onDelete }: {
           <Button size="sm" variant="default" className="flex-1 text-xs gap-1.5" onClick={onPlay}>
             <Play className="w-3.5 h-3.5" /> Play
           </Button>
-          <a href={video.videoUrl} download={`libraryminds-${video.id}.mp4`}>
+          <a href={video.videoUrl} download={`learnbay-${video.id}.mp4`}>
             <Button size="sm" variant="outline" className="text-xs gap-1.5">
               <Download className="w-3.5 h-3.5" />
             </Button>

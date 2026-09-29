@@ -232,7 +232,7 @@ export function BrandSettings({ brand, updateBrand, resetBrand }: Props) {
           <div className="grid grid-cols-2 gap-4">
             <Field label="Company Name">
               <input type="text" value={form.companyName} onChange={(e) => setF("companyName", e.target.value)}
-                placeholder="Libraryminds" className="input" />
+                placeholder="Learnbay" className="input" />
             </Field>
             <Field label="Tagline">
               <input type="text" value={form.tagline} onChange={(e) => setF("tagline", e.target.value)}

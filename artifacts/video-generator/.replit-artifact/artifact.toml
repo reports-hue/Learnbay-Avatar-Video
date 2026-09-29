@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "Libraryminds Video Generator"
+title = "Learnbay Video Generator"
 version = "1.0.0"
 id = "artifacts/video-generator"
 router = "path"

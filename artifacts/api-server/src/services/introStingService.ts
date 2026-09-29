@@ -145,7 +145,7 @@ export function buildLargeLogoFilters(
   // Width cap: never let a wide wordmark overflow the frame. Without this,
   // `scale=w=-1:h=H` ignores `force_original_aspect_ratio` (the directive
   // only takes effect when BOTH w and h are positive integers) and a wide
-  // logo (e.g. Libraryminds at ~5:1) renders at width = 5 × largeH which
+  // logo (e.g. a wide wordmark at ~5:1) renders at width = 5 × largeH which
   // can easily exceed `outW` on vertical 1080×1920 — the right edge gets
   // clipped at the frame boundary. We constrain to 80% of frame width with
   // 10% margin per side, then let `force_original_aspect_ratio=decrease`

@@ -6,63 +6,74 @@ id = "74UoWIPismv6FU9MCbsoU"
 uri = "file://DEPLOYMENT.md"
 type = "text"
 title = "Deployment Guide — Local + AWS PM2 + AWS Docker"
+logical_id = "27820948-3858-4dc4-8ea1-f637a5516578"
 
 [[outputs]]
 id = "1UFm-Hb-7yyX2iGiVa5GY"
 uri = "file://deployment-docs.zip"
 type = "unspecified"
 title = "All deployment files (Dockerfile, docker-compose.yml, PM2 config, .env.example)"
+logical_id = "9d25884d-13fc-42bd-944e-c74c946d2bc4"
 
 [[outputs]]
 id = "xh4HEz6y2nK-1g9WyHljk"
 uri = "file://attached_assets/diagnostic/01_raw_ai_background.jpg"
 type = "image"
 title = "Raw AI background (bg_7a20c24cdb5c.jpg) — what the AI generated"
+logical_id = "c8c14e71-6465-4ecd-8c82-2ec5d398bb3f"
 
 [[outputs]]
 id = "x0Tk-s0d0s5ScEqgROqKO"
 uri = "file://attached_assets/diagnostic/02_rendered_at_4s.jpg"
 type = "image"
 title = "Rendered video frame at 4s — '80%' badge + up-arrow + particles visible"
+logical_id = "bb7ca1d5-14fc-4ec0-b26d-70055a6f7305"
 
 [[outputs]]
 id = "EGHhnFDGlzwkKT1e56jm5"
 uri = "file://attached_assets/diagnostic/03_rendered_at_8s.jpg"
 type = "image"
 title = "Rendered video frame at 8s — badge gone, scene clean"
+logical_id = "f75c9ddd-b8c1-4724-90d2-2ea2006a70e6"
 
 [[outputs]]
 id = "yPtM0wh7KWIqmk0tmaPyp"
 uri = "file://attached_assets/diagnostic/audio/C_latest_video_audio.mp3"
 type = "audio"
 title = "C — Latest rendered video audio (20s) — does this match the typing you heard?"
+logical_id = "0a7dc0f4-5b46-4325-a408-c4ca3b7e701b"
 
 [[outputs]]
 id = "_uxDSgg2zNSv_Ll8q69vC"
 uri = "file://attached_assets/diagnostic/audio/D_video_music_only.mp3"
 type = "audio"
 title = "D — Same video with speech removed (>4kHz only) — typing sound isolated"
+logical_id = "078a9f89-78cf-4e95-b6b9-61ea52c2c212"
 
 [[outputs]]
 id = "YFUqZ6fhabw5PeROwSZF_"
 uri = "file://attached_assets/diagnostic/audio/E_music_1_FIXED_lowpass.mp3"
 type = "audio"
 title = "E — Proposed fix preview: music_1 with lowpass=6000 (no high-freq percussion)"
+logical_id = "5cd2149c-fbe5-482a-9d9a-31455eae1c84"
 
 [[outputs]]
 id = "pCxoO40PMsyFswo77C60B"
 uri = "file://attached_assets/diagnostic/audio/G_OLD_music_chain.mp3"
 type = "audio"
 title = "G — OLD music chain (12% vol, no lowpass) — hear the typing percussion in the highs"
+logical_id = "20d62554-2e80-441d-a2f8-0a71c4213829"
 
 [[outputs]]
 id = "LH2Mc-CvkWwm9CCwgS37e"
 uri = "file://attached_assets/diagnostic/audio/H_NEW_music_chain.mp3"
 type = "audio"
 title = "H — NEW music chain (15% vol, lowpass=6000) — typing gone, music body intact"
+logical_id = "35ab763d-46ba-4c6e-977a-b613f96fe690"
 
 [[outputs]]
 id = "lW8pgSXOR5JFDutTlJYsE"
 uri = "file://attached_assets/diagnostic/audio/I_NEW_FULL_MIX_preview.mp3"
 type = "audio"
 title = "I — NEW full mix preview: speech + new music + sidechain duck (exactly what next render will sound like)"
+logical_id = "9ffe1e82-2455-4750-aeba-349f8ce8e2ed"

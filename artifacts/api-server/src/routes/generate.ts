@@ -139,7 +139,7 @@ export interface GenerateRequest {
 }
 
 // ─── Async generation job ─────────────────────────────────────────
-async function runGenerationJob(jobId: string, body: GenerateRequest) {
+async function runGenerationJob(jobId: string, body: GenerateRequest, publicOrigin: string) {
   const {
     topic = "",
     platform = "",
@@ -314,8 +314,7 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
       updateJob(jobId, { step: "elevenlabs", percent: 20, message: "Synthesizing voice with ElevenLabs…" });
       const elResult = await synthesizeElevenLabs(script, elVoiceId, elApiKey);
       const rawElAudioPath = path.join(outputsDir, elResult.filename);
-      const publicDomain = process.env.REPLIT_DEV_DOMAIN || process.env.PUBLIC_URL;
-      if (!publicDomain) throw new Error("Cannot determine public URL for ElevenLabs audio. Set REPLIT_DEV_DOMAIN or PUBLIC_URL.");
+      if (!publicOrigin) throw new Error("Cannot determine public URL for ElevenLabs audio. Set PUBLIC_URL.");
 
       // Prepend leading silence so EL speech starts after the intro sting.
       if (introDurationSec > 0) {
@@ -323,10 +322,10 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
         const paddedPath = path.join(outputsDir, paddedFilename);
         await prependSilenceToElAudio(rawElAudioPath, paddedPath, introDurationSec);
         elAudioPath = paddedPath;
-        elAudioUrl = `https://${publicDomain}/api/video/${paddedFilename}`;
+        elAudioUrl = new URL(`/api/video/${paddedFilename}`, publicOrigin).toString();
       } else {
         elAudioPath = rawElAudioPath;
-        elAudioUrl = `https://${publicDomain}/api/video/${elResult.filename}`;
+        elAudioUrl = new URL(`/api/video/${elResult.filename}`, publicOrigin).toString();
       }
 
       // Shift word timings by the intro break so captions align with the padded audio.
@@ -360,7 +359,6 @@ async function runGenerationJob(jobId: string, body: GenerateRequest) {
     // substitutes a WHITE background (verified Apr 30 2026: ffprobe shows
     // pix_fmt=yuv420p with no alpha plane; corner pixels = #FFFFFF).
     // The legacy mp4 + green-screen + chroma key path is the working route.
-    // See replit.md → "Known Azure Limitations" for the full investigation.
     const PREFER_TRANSPARENT_WEBM = false;
     const wantsAlphaCompositing = realism && !bgImageUrl;
     const useTransparent = PREFER_TRANSPARENT_WEBM && wantsAlphaCompositing;
@@ -784,8 +782,14 @@ router.post("/generate", async (req: Request, res: Response) => {
     createdAt: Date.now(),
   });
 
+  // Prefer an explicit public origin; otherwise use the host of this request.
+  const requestHost = req.get("x-forwarded-host")?.split(",")[0]?.trim() || req.get("host");
+  const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const requestProtocol = forwardedProto === "http" || forwardedProto === "https" ? forwardedProto : "https";
+  const publicOrigin = process.env.PUBLIC_URL?.trim() || (requestHost ? `${requestProtocol}://${requestHost}` : "");
+
   // Fire and forget — client polls for progress
-  runGenerationJob(jobId, body).catch(() => {});
+  runGenerationJob(jobId, body, publicOrigin).catch(() => {});
 
   res.json({ jobId });
 });

@@ -1877,7 +1877,7 @@ export function CreateVideo({ brand, addVideo, setPage }: Props) {
               </div>
 
               <div className="flex gap-2">
-                <a href={result.videoUrl} download="libraryminds-video.mp4" className="flex-1">
+                <a href={result.videoUrl} download="learnbay-video.mp4" className="flex-1">
                   <Button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" size="sm">
                     <Download className="w-4 h-4" /> Download MP4
                   </Button>

@@ -1,4 +1,4 @@
-# Libraryminds Personal Video Generator
+# Learnbay Personal Video Generator
 
 A no-auth, avatar video generation tool powered by Azure AI that creates personalized video content.
 
@@ -71,7 +71,6 @@ A no-auth, avatar video generation tool powered by Azure AI that creates persona
 
 ## Pointers
 
-- [pnpm-workspace skill](https://www.replit.com/talk/announcements/pnpm-workspace-skill/12345)
 - [Azure OpenAI Documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/overview)
 - [Azure AI Speech Documentation (Avatar Synthesis)](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/avatar-overview)
 - [ElevenLabs API Documentation](https://elevenlabs.io/docs/api-reference)

@@ -26,7 +26,7 @@ async function fetchWebsite(url: string): Promise<string> {
   const response = await axios.get<string>(url, {
     timeout: 12000,
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; LibrarymindsBot/1.0; +https://libraryminds.com)",
+      "User-Agent": "LearnbayVideoGenerator/1.0",
       "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
     },
     maxRedirects: 5,

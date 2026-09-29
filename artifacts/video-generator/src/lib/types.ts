@@ -27,7 +27,7 @@ export const DEFAULT_BRAND: BrandProfile = {
   primaryColor: "#7C3AED",
   secondaryColor: "#4A9FFF",
   backgroundColor: "#0D1B2A",
-  defaultCta: "Follow Libraryminds",
+  defaultCta: "Follow Learnbay",
   tone: "professional",
   defaultVoice: "en-US-AvaMultilingualNeural",
   defaultVoiceStyle: "",

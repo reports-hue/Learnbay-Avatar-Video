@@ -18,7 +18,7 @@
  *     reject the default axios UA and return 403, or return SVG which ffmpeg
  *     cannot decode → silent fallback to the bundled logo or render failure.
  *   - SVG → PNG is done with system ImageMagick (`magick`), which is already
- *     available in the Replit Nix env (verified by the resolver probe at
+ *     available in the server environment (verified by the resolver probe at
  *     boot). We rasterize at high density (300dpi) so wordmark text remains
  *     crisp when scaled into the corner chip.
  */

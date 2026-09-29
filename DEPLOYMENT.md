@@ -1,4 +1,4 @@
-# Libraryminds Personal Video Generator — Deployment Guide
+# Learnbay Personal Video Generator — Deployment Guide
 
 Three deployment paths are covered:
 
@@ -70,8 +70,8 @@ PUBLIC_URL=https://your-domain.com
 ### 1. Clone and install dependencies
 
 ```bash
-git clone https://github.com/your-org/libraryminds-video-generator.git
-cd libraryminds-video-generator
+git clone https://github.com/your-org/learnbay-video-generator.git
+cd learnbay-video-generator
 pnpm install
 ```
 
@@ -155,8 +155,8 @@ pm2 --version
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/libraryminds-video-generator.git
-cd libraryminds-video-generator
+git clone https://github.com/your-org/learnbay-video-generator.git
+cd learnbay-video-generator
 
 # Install dependencies
 pnpm install --frozen-lockfile
@@ -190,10 +190,10 @@ Useful PM2 commands:
 
 ```bash
 pm2 status                  # view all processes
-pm2 logs libraryminds-api   # tail logs
-pm2 reload libraryminds-api # zero-downtime restart
-pm2 restart libraryminds-api
-pm2 stop libraryminds-api
+pm2 logs learnbay-api   # tail logs
+pm2 reload learnbay-api # zero-downtime restart
+pm2 restart learnbay-api
+pm2 stop learnbay-api
 ```
 
 ### 6. Nginx Reverse Proxy (Recommended)
@@ -201,7 +201,7 @@ pm2 stop libraryminds-api
 ```bash
 sudo apt-get install -y nginx
 
-sudo tee /etc/nginx/sites-available/libraryminds <<'EOF'
+sudo tee /etc/nginx/sites-available/learnbay <<'EOF'
 server {
     listen 80;
     server_name your-domain.com;
@@ -224,7 +224,7 @@ server {
 }
 EOF
 
-sudo ln -s /etc/nginx/sites-available/libraryminds /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/learnbay /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -239,12 +239,12 @@ sudo certbot --nginx -d your-domain.com
 ### 7. Deploy Updates
 
 ```bash
-cd libraryminds-video-generator
+cd learnbay-video-generator
 git pull origin main
 pnpm install --frozen-lockfile
 PORT=24396 BASE_PATH=/ pnpm --filter @workspace/video-generator run build
 pnpm --filter @workspace/api-server run build
-pm2 reload libraryminds-api
+pm2 reload learnbay-api
 ```
 
 ---
@@ -260,10 +260,10 @@ A `docker-compose.yml` is also provided for single-host deployments.
 
 ```bash
 # Build image (from project root)
-docker build -t libraryminds-video-generator:latest .
+docker build -t learnbay-video-generator:latest .
 
 # Or with a version tag
-docker build -t libraryminds-video-generator:1.0.0 .
+docker build -t learnbay-video-generator:1.0.0 .
 ```
 
 ### 2. Run Locally with Docker Compose
@@ -295,14 +295,14 @@ aws ecr get-login-password --region us-east-1 \
     YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com
 
 # Create ECR repository (once)
-aws ecr create-repository --repository-name libraryminds-video-generator
+aws ecr create-repository --repository-name learnbay-video-generator
 
 # Tag and push
-docker tag libraryminds-video-generator:latest \
-  YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/libraryminds-video-generator:latest
+docker tag learnbay-video-generator:latest \
+  YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/learnbay-video-generator:latest
 
 docker push \
-  YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/libraryminds-video-generator:latest
+  YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/learnbay-video-generator:latest
 ```
 
 #### ECS Task Definition (key settings)
@@ -347,16 +347,16 @@ aws ecr get-login-password --region us-east-1 \
   | docker login --username AWS --password-stdin \
     YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com
 
-docker pull YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/libraryminds-video-generator:latest
+docker pull YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/learnbay-video-generator:latest
 
 # Run
 docker run -d \
-  --name libraryminds \
+  --name learnbay \
   --restart unless-stopped \
   -p 8080:8080 \
-  --env-file /home/ubuntu/libraryminds.env \
+  --env-file /home/ubuntu/learnbay.env \
   -v /mnt/videos:/app/artifacts/api-server/outputs \
-  YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/libraryminds-video-generator:latest
+  YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/learnbay-video-generator:latest
 ```
 
 ---

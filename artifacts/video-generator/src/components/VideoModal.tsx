@@ -124,7 +124,7 @@ export function VideoModal({ video, onClose }: { video: VideoEntry; onClose: () 
               ))}
             </div>
           )}
-          <a href={video.videoUrl} download={`libraryminds-${video.id}.mp4`}>
+          <a href={video.videoUrl} download={`learnbay-${video.id}.mp4`}>
             <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
               <Download className="w-3.5 h-3.5" /> Download MP4
             </Button>

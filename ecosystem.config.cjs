@@ -1,5 +1,5 @@
 /**
- * PM2 Ecosystem File — Libraryminds Video Generator
+ * PM2 Ecosystem File — Learnbay Video Generator
  *
  * Usage:
  *   pm2 start ecosystem.config.cjs
@@ -12,7 +12,7 @@ require("dotenv").config();
 module.exports = {
   apps: [
     {
-      name: "libraryminds-api",
+      name: "learnbay-api",
       script: "./artifacts/api-server/dist/index.mjs",
       interpreter: "node",
       interpreter_args: "--enable-source-maps",
