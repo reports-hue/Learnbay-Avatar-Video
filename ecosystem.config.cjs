@@ -7,8 +7,6 @@
  *   pm2 startup
  */
 
-require("dotenv").config();
-
 module.exports = {
   apps: [
     {
@@ -37,8 +35,11 @@ module.exports = {
         AZURE_IMAGE_DEPLOYMENT: process.env.AZURE_IMAGE_DEPLOYMENT || "gpt-image-1",
 
         // App
-        SESSION_SECRET: process.env.SESSION_SECRET,
         PUBLIC_URL: process.env.PUBLIC_URL,
+        ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
+        PEXELS_API_KEY: process.env.PEXELS_API_KEY,
+        FFMPEG_PATH: process.env.FFMPEG_PATH,
+        LOG_LEVEL: process.env.LOG_LEVEL,
       },
 
       // Process management
@@ -56,8 +57,6 @@ module.exports = {
 
       // Graceful shutdown — give avatar jobs time to complete in-flight requests
       kill_timeout: 10000,
-      wait_ready: true,
-      listen_timeout: 15000,
     },
   ],
 };

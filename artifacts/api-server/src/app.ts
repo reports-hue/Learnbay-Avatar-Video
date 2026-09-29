@@ -39,7 +39,7 @@ if (process.env.NODE_ENV === "production") {
   // Serve the pre-built React frontend from the video-generator dist folder
   const frontendDist = path.resolve(__dirname, "../../video-generator/dist/public");
   app.use("/", express.static(frontendDist));
-  app.get("*", (_req, res) => {
+  app.get("/{*path}", (_req, res) => {
     res.sendFile(path.join(frontendDist, "index.html"));
   });
 } else {

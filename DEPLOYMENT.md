@@ -1,5 +1,7 @@
 # Learnbay Personal Video Generator — Deployment Guide
 
+For current Node.js, pnpm, Docker, PM2, and cloud setup instructions, use [installation.md](installation.md). This older guide is retained for deployment background and may contain outdated commands.
+
 Three deployment paths are covered:
 
 | Option | Best For |

@@ -77,3 +77,17 @@ uri = "file://attached_assets/diagnostic/audio/I_NEW_FULL_MIX_preview.mp3"
 type = "audio"
 title = "I — NEW full mix preview: speech + new music + sidechain duck (exactly what next render will sound like)"
 logical_id = "9ffe1e82-2455-4750-aeba-349f8ce8e2ed"
+
+[[outputs]]
+id = "20TvZ2nFCVfL63GH-JhpX"
+uri = "file://installation.md"
+type = "text"
+title = "Learnbay installation guide"
+description = "Setup for local use, Docker, PM2, AWS, Google Cloud, and Azure."
+logical_id = "fcc83d28-ff9f-4bcc-ab04-afc1792a92a4"
+content_hash = "sha256:6a1edfcb55c06f521930bcfa539809e91564da87151a06ccc2b975dede9882c2"
+size = 12660
+mtime_ms = 1790680362534
+storage_uri = "gcs://replit-rams-assets-pike/rams/assets/repl:6afeab35-e695-4a94-a102-f66fcbc85987/fcc83d28-ff9f-4bcc-ab04-afc1792a92a4/90fe0ca6-1fd0-4f11-9ded-2cd143819a2f"
+storage_version_token = "1790680371303146"
+content_type = "text/markdown"

@@ -1,0 +1,14 @@
+.git
+.agents
+.local
+.cache
+node_modules
+**/node_modules
+**/dist
+**/outputs
+attached_assets
+logs
+.env
+.env.*
+!.env.example
+*.zip

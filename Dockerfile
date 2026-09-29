@@ -1,9 +1,9 @@
 # ────────────────────────────────────────────────────────────────
 # Stage 1 — Install all workspace dependencies
 # ────────────────────────────────────────────────────────────────
-FROM node:20-slim AS deps
+FROM node:24-bookworm-slim AS deps
 
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm@10.26.1
 
 WORKDIR /app
 
@@ -47,9 +47,13 @@ RUN pnpm --filter @workspace/api-server run build
 # ────────────────────────────────────────────────────────────────
 # Stage 4 — Lean production image
 # ────────────────────────────────────────────────────────────────
-FROM node:20-slim AS production
+FROM node:24-bookworm-slim AS production
 
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm@10.26.1 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg imagemagick fonts-dejavu-core ca-certificates \
+    && (command -v magick >/dev/null || ln -s /usr/bin/convert /usr/local/bin/magick) \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
